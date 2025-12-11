@@ -138,14 +138,14 @@ with st.sidebar:
     st.link_button("✈️ Написать в Telegram", "https://t.me/retyreg")
 
     st.caption("Или на почту:")
-    st.code("vatyutovd@gmail.com", language=None)
+    st.code("vatutovd@gmail.com", language=None)
     
     contact_url = "mailto:vatutovd@gmail.com?subject=Вопрос по Vyud AI"
     st.link_button("📤 Открыть почту", contact_url)
     
     st.divider()
     
-    # --- СТАТУС СИСТЕМЫ (В ПОДВАЛЕ) ---
+    # --- СТАТУС СИСТЕМЫ ---
     if has_llama and has_openai:
         st.caption("🟢 System Status: Online & Secure")
     else:
@@ -156,7 +156,17 @@ with st.sidebar:
 # --- ОСНОВНОЙ ЭКРАН ---
 st.title("🎓 Vyud AI")
 
-# Если ключей НЕТ, показываем поля ввода на главном экране (блокируем работу)
+# === НОВОЕ: ОПИСАНИЕ ПРОДУКТА ===
+st.markdown(
+    """
+    #### Превращайте документы в обучение за секунды.
+    Загрузите инструкцию (PDF/PPTX) — AI создаст интерактивный тест, проверит знания и выдаст сертификат.
+    """
+)
+st.divider()
+# =================================
+
+# Если ключей НЕТ
 if not (has_llama and has_openai):
     st.warning("⚠️ Система не настроена. Введите API ключи для начала работы:")
     new_llama = st.text_input("LlamaCloud Key", type="password")
@@ -167,9 +177,9 @@ if not (has_llama and has_openai):
         os.environ["OPENAI_API_KEY"] = new_openai
         st.rerun()
     
-    st.stop() # Останавливаем выполнение, пока нет ключей
+    st.stop()
 
-# Если ключи ЕСТЬ, сразу показываем интерфейс (без лишних плашек)
+# Если ключи ЕСТЬ
 uploaded_file = st.file_uploader("Загрузи материал (PDF или PPTX)", type=["pdf", "pptx"])
 
 if uploaded_file and 'file_name' not in st.session_state:
@@ -237,7 +247,7 @@ if 'quiz' in st.session_state:
     st.subheader("🏆 Генерация сертификата")
     col1, col2 = st.columns(2)
     with col1:
-        student_name = st.text_input("Имя студента (на латинице):", "Luke Skywalker")
+        student_name = st.text_input("Имя студента (на латинице):", "Ivan Ivanov")
     with col2:
         course_default = st.session_state.get('file_name', 'Corporate Training')
         course_title = st.text_input("Название курса:", course_default)
