@@ -12,6 +12,10 @@ from llama_index.core.program import LLMTextCompletionProgram
 from pydantic import BaseModel, Field
 from typing import List
 
+# Библиотеки для работы с видео/аудио
+from moviepy.editor import VideoFileClip
+from pydub import AudioSegment
+
 # Библиотеки PDF
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import letter, landscape
@@ -29,8 +33,41 @@ class Quiz(BaseModel):
 
 # --- ФУНКЦИИ ОБРАБОТКИ ---
 
+def compress_audio(input_path):
+    """
+    Превращает видео/аудио в MP3 и сжимает, если файл > 25MB.
+    Возвращает путь к новому файлу.
+    """
+    file_size = os.path.getsize(input_path) / (1024 * 1024) # Размер в МБ
+    output_path = input_path + "_compressed.mp3"
+    
+    # Если файл уже маленький и это MP3/M4A/WAV, можно не трогать, 
+    # но для надежности лучше всегда конвертировать в MP3, если это видео.
+    
+    try:
+        # Если это видео, достаем звук
+        if input_path.lower().endswith(('.mp4', '.mov', '.avi', '.mkv')):
+            video = VideoFileClip(input_path)
+            video.audio.write_audiofile(output_path, bitrate="32k", logger=None) # Сильное сжатие 32k
+            video.close()
+            return output_path
+            
+        # Если это аудио, но тяжелое
+        elif file_size > 24:
+            audio = AudioSegment.from_file(input_path)
+            # Экспорт с низким битрейтом
+            audio.export(output_path, format="mp3", bitrate="32k")
+            return output_path
+            
+        else:
+            return input_path # Возвращаем как есть
+            
+    except Exception as e:
+        print(f"Ошибка сжатия: {e}")
+        return input_path # Если не вышло сжать, пробуем оригинал
+
 def process_file_to_text(uploaded_file, openai_key, llama_key):
-    """Определяет тип файла и извлекает текст (через Whisper или LlamaParse)"""
+    """Определяет тип файла и извлекает текст"""
     
     text = ""
     file_ext = os.path.splitext(uploaded_file.name)[1].lower()
@@ -42,14 +79,22 @@ def process_file_to_text(uploaded_file, openai_key, llama_key):
 
     try:
         # 1. ВИДЕО И АУДИО (Whisper)
-        if file_ext in [".mp4", ".mov", ".avi", ".mp3", ".mpeg", ".m4a"]:
+        if file_ext in [".mp4", ".mov", ".avi", ".mp3", ".mpeg", ".m4a", ".wav"]:
+            
+            # --- СЖАТИЕ ФАЙЛА (FIX 25MB LIMIT) ---
+            processed_path = compress_audio(tmp_path)
+            
             client = OpenAIClient(api_key=openai_key)
-            with open(tmp_path, "rb") as audio_file:
+            with open(processed_path, "rb") as audio_file:
                 transcription = client.audio.transcriptions.create(
                     model="whisper-1", 
                     file=audio_file,
                     response_format="json"
                 )
+            
+            # Удаляем сжатую копию, если создавали
+            if processed_path != tmp_path and os.path.exists(processed_path):
+                os.remove(processed_path)
             
             if hasattr(transcription, 'text'):
                 text = transcription.text
@@ -69,7 +114,6 @@ def process_file_to_text(uploaded_file, openai_key, llama_key):
                 raise Exception("Не удалось прочитать документ")
                 
     finally:
-        # Удаляем временный файл
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
             
@@ -96,7 +140,6 @@ def generate_quiz_ai(text, count, difficulty, lang):
     return program(text=text[:50000])
 
 def create_certificate(student_name, course_name, logo_file=None):
-    """Генерирует PDF сертификат"""
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=landscape(letter))
     width, height = landscape(letter)
