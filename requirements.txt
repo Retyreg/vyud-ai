@@ -8,3 +8,4 @@ python-dotenv
 reportlab
 moviepy==1.0.3
 decorator==4.4.2
+pydub
