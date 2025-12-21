@@ -1,0 +1,10 @@
+streamlit
+supabase
+openai
+llama-index-core
+llama-index-llms-openai
+llama-parse
+python-dotenv
+reportlab
+moviepy==1.0.3
+decorator==4.4.2

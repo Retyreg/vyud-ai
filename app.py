@@ -388,3 +388,4 @@ else:
                 file_name=f"Certificate_{student_name}.pdf",
                 mime="application/pdf"
             )
+
