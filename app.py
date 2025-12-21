@@ -7,7 +7,8 @@ from datetime import datetime
 from dotenv import load_dotenv
 from supabase import create_client, Client
 
-# --- БИБЛИОТЕКИ ДЛЯ ФУНКЦИОНАЛА (ТВОИ) ---
+# --- БИБЛИОТЕКИ ДЛЯ ФУНКЦИОНАЛА ---
+from openai import OpenAI as OpenAIClient
 from llama_parse import LlamaParse
 from llama_index.core import SimpleDirectoryReader, Settings
 from llama_index.llms.openai import OpenAI
@@ -213,7 +214,7 @@ if st.session_state['user'] is None:
                 st.warning("Некорректный Email")
         st.caption("Новым пользователям: 3 генерации бесплатно.")
 
-# --- СЦЕНАРИЙ 2: АВТОРИЗОВАН (ТВОЙ КОД) ---
+# --- СЦЕНАРИЙ 2: АВТОРИЗОВАН ---
 else:
     # Сайдбар: Профиль + Твои настройки
     with st.sidebar:
@@ -249,67 +250,125 @@ else:
     if uploaded_file and 'file_name' not in st.session_state:
         st.session_state['file_name'] = uploaded_file.name
 
+    # ЛОГИКА ОБРАБОТКИ ФАЙЛОВ
     if uploaded_file:
         # ПРОВЕРКА КНОПКИ ГЕНЕРАЦИИ И КРЕДИТОВ
         if st.button(t["btn_create"]):
             if st.session_state['credits'] > 0:
-                # 1. Читаем файл (LlamaParse)
+                
+                text = ""
                 file_ext = os.path.splitext(uploaded_file.name)[1].lower()
+                
+                # Создаем временный файл
                 with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as tmp:
                     tmp.write(uploaded_file.getvalue())
                     tmp_path = tmp.name
 
-                text = ""
-                with st.spinner(t["spinner_read"]):
-                    try:
-                        parser = LlamaParse(result_type="markdown", api_key=os.environ["LLAMA_CLOUD_API_KEY"])
-                        file_extractor = {".pdf": parser, ".pptx": parser, ".docx": parser, ".xlsx": parser, ".txt": parser}
-                        docs = SimpleDirectoryReader(input_files=[tmp_path], file_extractor=file_extractor).load_data()
-                        if docs: text = docs[0].text
-                        else: st.error(t["error_read"]); st.stop()
-                    except Exception as e:
-                        st.error(f"Error: {e}"); st.stop()
+                # --- ВЕТКА 1: ВИДЕО И АУДИО (Whisper) ---
+                if file_ext in [".mp4", ".mov", ".avi", ".mp3", ".mpeg", ".m4a"]:
+                    with st.spinner("🎧 Обрабатываю аудио (Whisper AI)..."):
+                        try:
+                            # Используем стандартный клиент OpenAI для Whisper
+                            client = OpenAIClient(api_key=os.environ["OPENAI_API_KEY"])
+                            
+                            with open(tmp_path, "rb") as audio_file:
+                                transcription = client.audio.transcriptions.create(
+                                    model="whisper-1", 
+                                    file=audio_file,
+                                    response_format="json"
+                                )
+                            
+                            # Исправление: проверяем, как вернулся ответ (объект или текст)
+                            if hasattr(transcription, 'text'):
+                                text = transcription.text  # Если это объект (Pydantic)
+                            elif isinstance(transcription, dict):
+                                text = transcription['text'] # Если это словарь
+                            else:
+                                text = str(transcription) # Если это просто строка
+                                
+                        except Exception as e:
+                            st.error(f"Ошибка транскрибации: {e}")
+                            st.stop()
+
+                # --- ВЕТКА 2: ДОКУМЕНТЫ (LlamaParse) ---
+                else:
+                    with st.spinner(t["spinner_read"]):
+                        try:
+                            parser = LlamaParse(result_type="markdown", api_key=os.environ["LLAMA_CLOUD_API_KEY"])
+                            file_extractor = {".pdf": parser, ".pptx": parser, ".docx": parser, ".xlsx": parser, ".txt": parser}
+                            docs = SimpleDirectoryReader(input_files=[tmp_path], file_extractor=file_extractor).load_data()
+                            if docs: text = docs[0].text
+                            else: st.error(t["error_read"]); st.stop()
+                        except Exception as e:
+                            st.error(f"Error parsing file: {e}"); st.stop()
 
                 # 2. Генерируем тест (OpenAI)
-                target_lang = quiz_lang if quiz_lang.strip() else "English"
-                with st.spinner(f"{t['spinner_ai']} ({target_lang})..."):
-                    try:
-                        Settings.llm = OpenAI(model="gpt-4o", temperature=0.1)
-                        prompt = (
-                            f"You are an expert instructional designer. "
-                            f"1. Analyze content. 2. Create quiz in '{target_lang}'. "
-                            f"3. Questions: {quiz_count}. 4. Diff: {quiz_difficulty}. "
-                            "Return STRICTLY JSON format matching the Quiz schema."
-                        )
-                        program = LLMTextCompletionProgram.from_defaults(
-                            output_cls=Quiz,
-                            prompt_template_str=prompt + " Content: {text}",
-                            llm=Settings.llm
-                        )
-                        result = program(text=text[:25000])
-                        st.session_state['quiz'] = result
-                        
-                        # 3. СПИСЫВАЕМ КРЕДИТ (Только если всё успешно)
-                        deduct_credit()
-                        st.rerun() # Перезагрузка, чтобы обновить счетчик
-                        
-                    except Exception as e:
-                        st.error(f"AI Error: {e}")
+                if text:
+                    target_lang = quiz_lang if quiz_lang.strip() else "English"
+                    with st.spinner(f"{t['spinner_ai']} ({target_lang})..."):
+                        try:
+                            Settings.llm = OpenAI(model="gpt-4o", temperature=0.1)
+                            prompt = (
+                                f"You are an expert instructional designer. "
+                                f"1. Analyze content. 2. Create quiz in '{target_lang}'. "
+                                f"3. Questions: {quiz_count}. 4. Diff: {quiz_difficulty}. "
+                                "Return STRICTLY JSON format matching the Quiz schema."
+                            )
+                            program = LLMTextCompletionProgram.from_defaults(
+                                output_cls=Quiz,
+                                prompt_template_str=prompt + " Content: {text}",
+                                llm=Settings.llm
+                            )
+                            # Ограничиваем текст, чтобы не перегрузить контекст
+                            result = program(text=text[:50000]) 
+                            st.session_state['quiz'] = result
+                            
+                            # 3. СПИСЫВАЕМ КРЕДИТ
+                            deduct_credit()
+                            st.rerun() 
+                            
+                        except Exception as e:
+                            st.error(f"AI Error: {e}")
+                else:
+                    st.error("Не удалось извлечь текст из файла.")
+
             else:
                 st.error(t["no_credits"])
 
-    # ВЫВОД РЕЗУЛЬТАТА (Если тест уже сгенерирован)
+    # ВЫВОД РЕЗУЛЬТАТА (ИСПРАВЛЕННАЯ ВЕРСИЯ С ЗАЩИТОЙ)
     if st.session_state['quiz']:
-        t = TRANSLATIONS[ui_language] # Обновляем перевод для этой части
+        t = TRANSLATIONS[ui_language] # Обновляем перевод
         st.divider()
         st.success(f"✅ Тест готов! Остаток кредитов: {st.session_state['credits']}")
         
         quiz = st.session_state['quiz']
         for i, q in enumerate(quiz.questions):
             st.subheader(f"{i+1}. {q.scenario}")
+            
+            # --- ЗАЩИТА ОТ ОШИБОК AI (FIX) ---
+            # Проверяем, есть ли вообще варианты ответов
+            if not q.options:
+                st.error("Ошибка: Нет вариантов ответа.")
+                continue
+                
+            # Проверяем индекс правильного ответа
+            safe_correct_id = q.correct_option_id
+            
+            # Если AI дал индекс больше, чем есть вариантов
+            if safe_correct_id >= len(q.options):
+                safe_correct_id = 0 # По умолчанию ставим первый
+                
+            # Если индекс отрицательный
+            if safe_correct_id < 0:
+                safe_correct_id = 0
+            # ----------------------------------
+
             st.radio("Варианты:", q.options, key=f"q{i}")
+            
             with st.expander("Показать ответ"):
-                st.write(f"{t['q_correct']} {q.options[q.correct_option_id]}")
+                # Используем безопасный индекс safe_correct_id
+                correct_text = q.options[safe_correct_id]
+                st.write(f"**{t['q_correct']}** {correct_text}")
                 st.info(q.explanation)
 
         st.divider()

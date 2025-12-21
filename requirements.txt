@@ -1,9 +1,0 @@
-streamlit
-llama-index
-llama-parse
-python-dotenv
-openai
-pydantic
-nest_asyncio
-reportlab
-supabase
