@@ -116,23 +116,40 @@ def process_file_to_text(uploaded_file, openai_key, llama_key):
     return text
 
 def generate_quiz_ai(text, count, difficulty, lang):
-    """Генерирует JSON с тестом через GPT-4o"""
-    Settings.llm = OpenAI(model="gpt-4o", temperature=0.1)
+    """Генерирует JSON с тестом через GPT-4o (PRO Промпт)"""
+    Settings.llm = OpenAI(model="gpt-4o", temperature=0.2) # Чуть повысим креативность для сценариев
     
-    prompt = (
-        f"You are an expert instructional designer. "
-        f"1. Analyze content. 2. Create quiz in '{lang}'. "
-        f"3. Questions: {count}. 4. Diff: {difficulty}. "
-        "Return STRICTLY JSON format matching the Quiz schema."
+    # Продвинутый промпт для корпоративного обучения
+    system_prompt = (
+        f"Role: You are a Senior Instructional Designer for a Fortune 500 company. "
+        f"Task: Create a high-quality assessment quiz based on the provided text. "
+        f"Target Audience: Corporate employees. "
+        f"Language: All questions, options, and explanations must be in '{lang}'.\n\n"
+        
+        f"Configuration:\n"
+        f"- Number of questions: {count}\n"
+        f"- Difficulty Level: {difficulty}\n\n"
+        
+        f"Difficulty Guidelines:\n"
+        f"- If 'Easy': Focus on recalling facts, definitions, and key terms from the text.\n"
+        f"- If 'Medium': Focus on understanding and applying concepts. Use simple 'What would you do?' scenarios.\n"
+        f"- If 'Hard': Focus on analysis and evaluation. Use COMPLEX SCENARIOS/CASE STUDIES where the user must diagnose a problem or choose the BEST solution among several good ones.\n\n"
+        
+        f"Rules for Quality:\n"
+        f"1. NO 'all of the above' or 'none of the above' options.\n"
+        f"2. Distractors (wrong answers) must be PLAUSIBLE common misconceptions, not obvious jokes.\n"
+        f"3. The 'scenario' field should be the question text. For Hard/Medium, make it a mini-story.\n"
+        f"4. The 'explanation' must explain WHY the correct answer is right AND why the distraction was wrong. It should be educational.\n"
+        f"5. Strictly follow the JSON schema provided."
     )
     
     program = LLMTextCompletionProgram.from_defaults(
         output_cls=Quiz,
-        prompt_template_str=prompt + " Content: {text}",
+        prompt_template_str=system_prompt + "\n\nContent to analyze:\n{text}",
         llm=Settings.llm
     )
     
-    # Ограничиваем текст для экономии токенов
+    # Ограничиваем текст (видео бывает длинным, берем самое важное)
     return program(text=text[:50000])
 
 def create_certificate(student_name, course_name, logo_file=None):
