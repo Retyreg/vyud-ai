@@ -1,22 +1,25 @@
 import streamlit as st
 import os
+import time
 from dotenv import load_dotenv
 
 # ИМПОРТ НАШИХ МОДУЛЕЙ
 import auth
 import logic
-import streamlit as st
-import os
-import time  # <--- ДОБАВИТЬ ЭТУ СТРОКУ
-from dotenv import load_dotenv
 
 # 1. НАСТРОЙКИ
 st.set_page_config(page_title="Vyud AI", page_icon="🎓", layout="wide")
 load_dotenv()
 
-# Установка ключей в переменные окружения (для Logic)
+# Установка ключей
 os.environ["OPENAI_API_KEY"] = st.secrets["OPENAI_API_KEY"]
 os.environ["LLAMA_CLOUD_API_KEY"] = st.secrets["LLAMA_CLOUD_API_KEY"]
+
+# --- КОНФИГУРАЦИЯ БИЗНЕСА ---
+# Вставьте сюда вашу ссылку на оплату (Stripe Link, ЮKassa, или Telegram контакт)
+PAYMENT_LINK = "https://t.me/retyreg" 
+# Вставьте сюда ВАШ email, чтобы видеть админку
+ADMIN_EMAIL = "vatyutovd@gmail.com"  
 
 # Инициализация сессии
 if 'user' not in st.session_state: st.session_state['user'] = None
@@ -39,7 +42,9 @@ TRANSLATIONS = {
         "btn_download_html": "🌐 Скачать Тест (HTML)",
         "no_credits": "⚠️ Недостаточно кредитов!",
         "q_correct": "Правильно:",
-        "preview_label": "Предпросмотр теста:"
+        "preview_label": "Предпросмотр теста:",
+        "buy_credits": "💎 Купить пакет (50 шт)",
+        "buy_desc": "Снимите лимиты и генерируйте тесты без ограничений."
     },
     "English": {
         "branding_header": "🏢 Branding",
@@ -55,7 +60,9 @@ TRANSLATIONS = {
         "btn_download_html": "🌐 Download Quiz (HTML)",
         "no_credits": "⚠️ Not enough credits!",
         "q_correct": "Correct:",
-        "preview_label": "Quiz Preview:"
+        "preview_label": "Quiz Preview:",
+        "buy_credits": "💎 Buy Credits (50 pack)",
+        "buy_desc": "Remove limits and generate unlimited quizzes."
     }
 }
 
@@ -86,6 +93,12 @@ else:
         ui_lang = st.selectbox("🌐 Language", ["Русский", "English"])
         t = TRANSLATIONS[ui_lang]
 
+        # --- БЛОК ОПЛАТЫ (НОВОЕ) ---
+        st.info(t["buy_desc"])
+        st.link_button(t["buy_credits"], PAYMENT_LINK)
+        st.divider()
+        # ---------------------------
+
         st.header(t["branding_header"])
         company_logo = st.file_uploader(t["logo_label"], type=["png", "jpg", "jpeg"])
         if company_logo: st.image(company_logo, width=100)
@@ -95,6 +108,33 @@ else:
         quiz_lang = st.text_input(t["target_lang_label"], value="Russian" if ui_lang=="Русский" else "English")
         quiz_difficulty = st.radio(t["difficulty_label"], ["Easy", "Medium", "Hard"])
         quiz_count = st.slider(t["count_label"], 1, 10, 5)
+
+        # --- СЕКРЕТНАЯ АДМИНКА (НОВОЕ) ---
+        # Видна только если email совпадает с ADMIN_EMAIL
+        if st.session_state['user'] == ADMIN_EMAIL:
+            st.divider()
+            with st.expander("🔐 ADMIN PANEL"):
+                target_email = st.text_input("Email пользователя")
+                amount = st.number_input("Сколько кредитов добавить", value=10)
+                if st.button("Начислить"):
+                    try:
+                        # Получаем текущие кредиты
+                        res = auth.supabase.table('users_credits').select("*").eq('email', target_email.lower().strip()).execute()
+                        if res.data:
+                            current = res.data[0]['credits']
+                            new_val = current + amount
+                            auth.supabase.table('users_credits').update({'credits': new_val}).eq('email', target_email.lower().strip()).execute()
+                            st.success(f"Начислено! У {target_email} теперь {new_val} кредитов.")
+                            # Если начисляем себе - обновляем интерфейс сразу
+                            if target_email == st.session_state['user']:
+                                st.session_state['credits'] = new_val
+                                time.sleep(1)
+                                st.rerun()
+                        else:
+                            st.error("Пользователь не найден")
+                    except Exception as e:
+                        st.error(f"Ошибка: {e}")
+        # ---------------------------------
 
     # Главное окно
     st.title("🎓 Vyud AI")
@@ -108,25 +148,24 @@ else:
             if st.session_state['credits'] > 0:
                 with st.spinner("⏳ Анализирую файл и создаю тест..."):
                     try:
-                        # 1. Извлекаем текст (LOGIC)
+                        # 1. Извлекаем текст
                         text = logic.process_file_to_text(
                             uploaded_file, 
                             st.secrets["OPENAI_API_KEY"], 
                             st.secrets["LLAMA_CLOUD_API_KEY"]
                         )
                         
-                        # 2. Генерируем тест (LOGIC)
+                        # 2. Генерируем тест
                         if text:
                             quiz = logic.generate_quiz_ai(text, quiz_count, quiz_difficulty, quiz_lang)
                             st.session_state['quiz'] = quiz
                             
-                            # 3. Списываем кредит (AUTH)
+                            # 3. Списываем кредит
                             auth.deduct_credit()
                             
-                            # --- [START] WOW-ЭФФЕКТ ---
-                            st.balloons()          # Запускаем шарики
-                            time.sleep(1.5)        # Ждем 1.5 секунды, чтобы пользователь их увидел
-                            # --- [END] WOW-ЭФФЕКТ ---
+                            # WOW-эффект
+                            st.balloons()
+                            time.sleep(1.5)
                             
                             st.rerun()
                         else:
@@ -145,13 +184,12 @@ else:
         
         quiz = st.session_state['quiz']
         
-        # --- [START] КНОПКА СКАЧИВАНИЯ HTML ---
+        # Кнопка HTML
         col1, col2 = st.columns([3, 1])
         with col1:
             st.subheader(t["preview_label"])
         with col2:
             course_name_file = st.session_state.get('file_name', 'Course')
-            # Генерируем HTML через функцию в logic.py
             try:
                 html_data = logic.create_html_quiz(quiz, course_name_file)
                 st.download_button(
@@ -161,13 +199,11 @@ else:
                     mime="text/html"
                 )
             except Exception as e:
-                st.error(f"Ошибка генерации HTML: {e}")
-        # --- [END] КНОПКА СКАЧИВАНИЯ HTML ---
+                st.error(f"Ошибка HTML: {e}")
 
         for i, q in enumerate(quiz.questions):
             st.write(f"**{i+1}. {q.scenario}**")
             
-            # Защита от ошибок индекса
             if not q.options: continue
             safe_id = q.correct_option_id
             if safe_id >= len(q.options) or safe_id < 0: safe_id = 0
