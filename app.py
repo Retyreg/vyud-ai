@@ -130,20 +130,37 @@ else:
         st.success(f"✅ Тест готов! Остаток: {st.session_state['credits']}")
         
         quiz = st.session_state['quiz']
+        
+        # --- БЛОК СКАЧИВАНИЯ HTML (НОВОЕ) ---
+        col_res1, col_res2 = st.columns([3, 1])
+        with col_res1:
+            st.subheader("Предпросмотр вопросов:")
+        with col_res2:
+            # Генерация HTML
+            course_name_file = st.session_state.get('file_name', 'Course')
+            html_data = logic.create_html_quiz(quiz, course_name_file)
+            st.download_button(
+                label="🌐 Скачать как HTML",
+                data=html_data,
+                file_name=f"Quiz_{course_name_file}.html",
+                mime="text/html"
+            )
+        # ------------------------------------
+
         for i, q in enumerate(quiz.questions):
-            st.subheader(f"{i+1}. {q.scenario}")
+            st.write(f"**{i+1}. {q.scenario}**")
             
             # Защита от ошибок индекса
             if not q.options: continue
             safe_id = q.correct_option_id
             if safe_id >= len(q.options) or safe_id < 0: safe_id = 0
             
-            st.radio("Ответы:", q.options, key=f"q{i}")
+            st.radio("Ответы:", q.options, key=f"q{i}", label_visibility="collapsed")
             with st.expander("Показать правильный ответ"):
                 st.write(f"**{t['q_correct']}** {q.options[safe_id]}")
                 st.info(q.explanation)
+            st.markdown("---")
 
-        st.divider()
         st.subheader(t["success_cert"])
         c1, c2 = st.columns(2)
         with c1: s_name = st.text_input("Student Name", "Ivan Ivanov")
@@ -151,4 +168,4 @@ else:
         
         if st.button(t["btn_download_cert"]):
             pdf_data = logic.create_certificate(s_name, c_title, company_logo)
-            st.download_button("📥 PDF", pdf_data, "certificate.pdf", "application/pdf")
+            st.download_button("📥 PDF Сертификат", pdf_data, "certificate.pdf", "application/pdf")
