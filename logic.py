@@ -177,3 +177,104 @@ def create_certificate(student_name, course_name, logo_file=None):
     c.save()
     buffer.seek(0)
     return buffer
+    def create_html_quiz(quiz, course_title):
+    """Генерирует интерактивный HTML файл с тестом"""
+    html = f"""
+    <!DOCTYPE html>
+    <html lang="ru">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Тест: {course_title}</title>
+        <style>
+            body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 800px; margin: 40px auto; padding: 20px; background-color: #f4f4f9; }}
+            .container {{ background: white; padding: 30px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }}
+            h1 {{ color: #333; text-align: center; }}
+            .question {{ margin-bottom: 25px; border-bottom: 1px solid #eee; padding-bottom: 20px; }}
+            .options label {{ display: block; margin: 10px 0; padding: 10px; border: 1px solid #ddd; border-radius: 5px; cursor: pointer; transition: 0.2s; }}
+            .options label:hover {{ background-color: #f0f8ff; }}
+            .btn {{ display: block; width: 100%; padding: 15px; background: #007bff; color: white; border: none; border-radius: 5px; font-size: 18px; cursor: pointer; margin-top: 20px; }}
+            .btn:hover {{ background: #0056b3; }}
+            .feedback {{ margin-top: 10px; padding: 10px; border-radius: 5px; display: none; }}
+            .correct-answer {{ background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; }}
+            .wrong-answer {{ background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>🎓 {course_title}</h1>
+            <form id="quizForm">
+    """
+
+    # Безопасно собираем правильные ответы для JS
+    correct_indices = []
+    
+    for i, q in enumerate(quiz.questions):
+        # Защита индекса (как в app.py)
+        safe_id = q.correct_option_id
+        if not q.options: continue
+        if safe_id >= len(q.options) or safe_id < 0: safe_id = 0
+        correct_indices.append(safe_id)
+
+        html += f"""
+        <div class="question" id="q{i}">
+            <h3>{i+1}. {q.scenario}</h3>
+            <div class="options">
+        """
+        for j, opt in enumerate(q.options):
+            html += f"""
+                <label>
+                    <input type="radio" name="q{i}" value="{j}"> {opt}
+                </label>
+            """
+        
+        html += f"""
+            </div>
+            <div id="feedback-{i}" class="feedback">
+                <strong>Правильный ответ:</strong> {q.options[safe_id]}<br>
+                <em>{q.explanation}</em>
+            </div>
+        </div>
+        """
+
+    # JavaScript для проверки
+    html += f"""
+            <button type="button" class="btn" onclick="checkAnswers()">Проверить результаты</button>
+        </form>
+    </div>
+
+    <script>
+        const correctAnswers = {correct_indices};
+        
+        function checkAnswers() {{
+            let score = 0;
+            correctAnswers.forEach((correct, index) => {{
+                const feedback = document.getElementById('feedback-' + index);
+                const options = document.getElementsByName('q' + index);
+                let selected = -1;
+                
+                options.forEach(opt => {{
+                    if (opt.checked) selected = parseInt(opt.value);
+                    opt.disabled = true; // Блокируем выбор
+                }});
+
+                feedback.style.display = 'block';
+                
+                if (selected === correct) {{
+                    score++;
+                    feedback.className = 'feedback correct-answer';
+                    feedback.innerHTML = '✅ Верно! ' + feedback.innerHTML;
+                }} else {{
+                    feedback.className = 'feedback wrong-answer';
+                    feedback.innerHTML = '❌ Ошибка. ' + feedback.innerHTML;
+                }}
+            }});
+            
+            alert(`Ваш результат: ${{score}} из ${{correctAnswers.length}}`);
+        }}
+    </script>
+    </body>
+    </html>
+    """
+    
+    return html.encode('utf-8')
