@@ -36,26 +36,22 @@ class Quiz(BaseModel):
 def compress_audio(input_path):
     """
     Превращает видео/аудио в MP3 и сжимает, если файл > 25MB.
-    Возвращает путь к новому файлу.
     """
-    file_size = os.path.getsize(input_path) / (1024 * 1024) # Размер в МБ
-    output_path = input_path + "_compressed.mp3"
-    
-    # Если файл уже маленький и это MP3/M4A/WAV, можно не трогать, 
-    # но для надежности лучше всегда конвертировать в MP3, если это видео.
-    
     try:
+        file_size = os.path.getsize(input_path) / (1024 * 1024) # Размер в МБ
+        output_path = input_path + "_compressed.mp3"
+        
         # Если это видео, достаем звук
         if input_path.lower().endswith(('.mp4', '.mov', '.avi', '.mkv')):
             video = VideoFileClip(input_path)
-            video.audio.write_audiofile(output_path, bitrate="32k", logger=None) # Сильное сжатие 32k
+            # Извлекаем аудио, глушим вывод логов (logger=None)
+            video.audio.write_audiofile(output_path, bitrate="32k", logger=None)
             video.close()
             return output_path
             
-        # Если это аудио, но тяжелое
+        # Если это аудио, но тяжелое (>24MB)
         elif file_size > 24:
             audio = AudioSegment.from_file(input_path)
-            # Экспорт с низким битрейтом
             audio.export(output_path, format="mp3", bitrate="32k")
             return output_path
             
@@ -63,8 +59,8 @@ def compress_audio(input_path):
             return input_path # Возвращаем как есть
             
     except Exception as e:
-        print(f"Ошибка сжатия: {e}")
-        return input_path # Если не вышло сжать, пробуем оригинал
+        print(f"Warning: Audio compression failed: {e}")
+        return input_path
 
 def process_file_to_text(uploaded_file, openai_key, llama_key):
     """Определяет тип файла и извлекает текст"""
@@ -81,7 +77,7 @@ def process_file_to_text(uploaded_file, openai_key, llama_key):
         # 1. ВИДЕО И АУДИО (Whisper)
         if file_ext in [".mp4", ".mov", ".avi", ".mp3", ".mpeg", ".m4a", ".wav"]:
             
-            # --- СЖАТИЕ ФАЙЛА (FIX 25MB LIMIT) ---
+            # Сжимаем/конвертируем перед отправкой
             processed_path = compress_audio(tmp_path)
             
             client = OpenAIClient(api_key=openai_key)
@@ -92,7 +88,7 @@ def process_file_to_text(uploaded_file, openai_key, llama_key):
                     response_format="json"
                 )
             
-            # Удаляем сжатую копию, если создавали
+            # Удаляем сжатую копию
             if processed_path != tmp_path and os.path.exists(processed_path):
                 os.remove(processed_path)
             
@@ -177,7 +173,8 @@ def create_certificate(student_name, course_name, logo_file=None):
     c.save()
     buffer.seek(0)
     return buffer
-    def create_html_quiz(quiz, course_title):
+
+def create_html_quiz(quiz, course_title):
     """Генерирует интерактивный HTML файл с тестом"""
     # Собираем индексы правильных ответов
     correct_indices = []
