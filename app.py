@@ -123,34 +123,33 @@ else:
             else:
                 st.error(t["no_credits"])
 
-    # ВЫВОД РЕЗУЛЬТАТА
+# ВЫВОД РЕЗУЛЬТАТА
     if st.session_state['quiz']:
         t = TRANSLATIONS[ui_lang]
         st.divider()
-        st.success(f"✅ Тест готов! Остаток: {st.session_state['credits']}")
+        st.success(f"✅ Тест готов! Остаток кредитов: {st.session_state['credits']}")
         
         quiz = st.session_state['quiz']
         
-        # --- БЛОК СКАЧИВАНИЯ HTML (НОВОЕ) ---
-        col_res1, col_res2 = st.columns([3, 1])
-        with col_res1:
-            st.subheader("Предпросмотр вопросов:")
-        with col_res2:
-            # Генерация HTML
+        # --- [START] КНОПКА СКАЧИВАНИЯ HTML ---
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.subheader("Предпросмотр теста:")
+        with col2:
             course_name_file = st.session_state.get('file_name', 'Course')
+            # Генерируем HTML
             html_data = logic.create_html_quiz(quiz, course_name_file)
             st.download_button(
-                label="🌐 Скачать как HTML",
+                label="🌐 Скачать HTML",
                 data=html_data,
                 file_name=f"Quiz_{course_name_file}.html",
                 mime="text/html"
             )
-        # ------------------------------------
+        # --- [END] КНОПКА СКАЧИВАНИЯ HTML ---
 
         for i, q in enumerate(quiz.questions):
             st.write(f"**{i+1}. {q.scenario}**")
             
-            # Защита от ошибок индекса
             if not q.options: continue
             safe_id = q.correct_option_id
             if safe_id >= len(q.options) or safe_id < 0: safe_id = 0
