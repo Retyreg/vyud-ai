@@ -5,6 +5,10 @@ from dotenv import load_dotenv
 # ИМПОРТ НАШИХ МОДУЛЕЙ
 import auth
 import logic
+import streamlit as st
+import os
+import time  # <--- ДОБАВИТЬ ЭТУ СТРОКУ
+from dotenv import load_dotenv
 
 # 1. НАСТРОЙКИ
 st.set_page_config(page_title="Vyud AI", page_icon="🎓", layout="wide")
@@ -118,6 +122,12 @@ else:
                             
                             # 3. Списываем кредит (AUTH)
                             auth.deduct_credit()
+                            
+                            # --- [START] WOW-ЭФФЕКТ ---
+                            st.balloons()          # Запускаем шарики
+                            time.sleep(1.5)        # Ждем 1.5 секунды, чтобы пользователь их увидел
+                            # --- [END] WOW-ЭФФЕКТ ---
+                            
                             st.rerun()
                         else:
                             st.error("Текст не найден.")
