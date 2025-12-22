@@ -1,6 +1,7 @@
 import streamlit as st
 import os
 import time
+import pandas as pd # Добавили pandas для красивой таблицы
 from dotenv import load_dotenv
 
 # ИМПОРТ НАШИХ МОДУЛЕЙ
@@ -16,10 +17,8 @@ os.environ["OPENAI_API_KEY"] = st.secrets["OPENAI_API_KEY"]
 os.environ["LLAMA_CLOUD_API_KEY"] = st.secrets["LLAMA_CLOUD_API_KEY"]
 
 # --- КОНФИГУРАЦИЯ БИЗНЕСА ---
-# Вставьте сюда вашу ссылку на оплату (Stripe Link, ЮKassa, или Telegram контакт)
 PAYMENT_LINK = "https://t.me/retyreg" 
-# Вставьте сюда ВАШ email, чтобы видеть админку
-ADMIN_EMAIL = "vatyutovd@gmail.com"  
+ADMIN_EMAIL = "vatyutovd@gmail.com"  # <--- ВАШ EMAIL (только он увидит админку)
 
 # Инициализация сессии
 if 'user' not in st.session_state: st.session_state['user'] = None
@@ -93,11 +92,10 @@ else:
         ui_lang = st.selectbox("🌐 Language", ["Русский", "English"])
         t = TRANSLATIONS[ui_lang]
 
-        # --- БЛОК ОПЛАТЫ (НОВОЕ) ---
+        # --- БЛОК ОПЛАТЫ ---
         st.info(t["buy_desc"])
         st.link_button(t["buy_credits"], PAYMENT_LINK)
         st.divider()
-        # ---------------------------
 
         st.header(t["branding_header"])
         company_logo = st.file_uploader(t["logo_label"], type=["png", "jpg", "jpeg"])
@@ -109,29 +107,40 @@ else:
         quiz_difficulty = st.radio(t["difficulty_label"], ["Easy", "Medium", "Hard"])
         quiz_count = st.slider(t["count_label"], 1, 10, 5)
 
-        # --- СЕКРЕТНАЯ АДМИНКА (НОВОЕ) ---
-        # Видна только если email совпадает с ADMIN_EMAIL
+        # --- АДМИН ПАНЕЛЬ v2.0 (С ТАБЛИЦЕЙ) ---
         if st.session_state['user'] == ADMIN_EMAIL:
             st.divider()
-            with st.expander("🔐 ADMIN PANEL"):
-                target_email = st.text_input("Email пользователя")
-                amount = st.number_input("Сколько кредитов добавить", value=10)
-                if st.button("Начислить"):
+            with st.expander("🔐 ADMIN: Пользователи"):
+                # 1. Показываем таблицу всех юзеров
+                try:
+                    # Запрос в базу Supabase через auth
+                    all_users = auth.supabase.table('users_credits').select("*").execute()
+                    if all_users.data:
+                        df = pd.DataFrame(all_users.data)
+                        st.dataframe(df, hide_index=True) # Красивая таблица
+                    else:
+                        st.warning("Пользователей пока нет")
+                except Exception as e:
+                    st.error(f"Ошибка загрузки пользователей: {e}")
+
+                st.markdown("---")
+                # 2. Форма начисления
+                st.write("**Начислить кредиты:**")
+                target_email = st.text_input("Email клиента")
+                amount = st.number_input("Количество", value=50)
+                
+                if st.button("💰 Начислить"):
                     try:
-                        # Получаем текущие кредиты
                         res = auth.supabase.table('users_credits').select("*").eq('email', target_email.lower().strip()).execute()
                         if res.data:
                             current = res.data[0]['credits']
                             new_val = current + amount
                             auth.supabase.table('users_credits').update({'credits': new_val}).eq('email', target_email.lower().strip()).execute()
-                            st.success(f"Начислено! У {target_email} теперь {new_val} кредитов.")
-                            # Если начисляем себе - обновляем интерфейс сразу
-                            if target_email == st.session_state['user']:
-                                st.session_state['credits'] = new_val
-                                time.sleep(1)
-                                st.rerun()
+                            st.success(f"Успешно! {target_email}: {current} -> {new_val}")
+                            time.sleep(1)
+                            st.rerun() # Обновляем таблицу сразу
                         else:
-                            st.error("Пользователь не найден")
+                            st.error("Email не найден в базе!")
                     except Exception as e:
                         st.error(f"Ошибка: {e}")
         # ---------------------------------
@@ -148,25 +157,23 @@ else:
             if st.session_state['credits'] > 0:
                 with st.spinner("⏳ Анализирую файл и создаю тест..."):
                     try:
-                        # 1. Извлекаем текст
+                        # 1. Logic
                         text = logic.process_file_to_text(
                             uploaded_file, 
                             st.secrets["OPENAI_API_KEY"], 
                             st.secrets["LLAMA_CLOUD_API_KEY"]
                         )
                         
-                        # 2. Генерируем тест
+                        # 2. Generate
                         if text:
                             quiz = logic.generate_quiz_ai(text, quiz_count, quiz_difficulty, quiz_lang)
                             st.session_state['quiz'] = quiz
                             
-                            # 3. Списываем кредит
+                            # 3. Credits
                             auth.deduct_credit()
                             
-                            # WOW-эффект
                             st.balloons()
                             time.sleep(1.5)
-                            
                             st.rerun()
                         else:
                             st.error("Текст не найден.")
@@ -184,7 +191,7 @@ else:
         
         quiz = st.session_state['quiz']
         
-        # Кнопка HTML
+        # HTML кнопка
         col1, col2 = st.columns([3, 1])
         with col1:
             st.subheader(t["preview_label"])
