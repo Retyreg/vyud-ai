@@ -2,7 +2,7 @@ import streamlit as st
 import os
 from dotenv import load_dotenv
 
-# ИМПОРТ НАШИХ НОВЫХ МОДУЛЕЙ
+# ИМПОРТ НАШИХ МОДУЛЕЙ
 import auth
 import logic
 
@@ -19,7 +19,7 @@ if 'user' not in st.session_state: st.session_state['user'] = None
 if 'credits' not in st.session_state: st.session_state['credits'] = 0
 if 'quiz' not in st.session_state: st.session_state['quiz'] = None
 
-# СЛОВАРЬ ПЕРЕВОДОВ (Оставим здесь для UI)
+# СЛОВАРЬ ПЕРЕВОДОВ
 TRANSLATIONS = {
     "Русский": {
         "branding_header": "🏢 Брендинг",
@@ -32,8 +32,10 @@ TRANSLATIONS = {
         "btn_create": "🚀 Создать Тест (1 кредит)",
         "success_cert": "🏆 Сертификация",
         "btn_download_cert": "📄 Скачать Сертификат",
+        "btn_download_html": "🌐 Скачать Тест (HTML)",
         "no_credits": "⚠️ Недостаточно кредитов!",
-        "q_correct": "Правильно:"
+        "q_correct": "Правильно:",
+        "preview_label": "Предпросмотр теста:"
     },
     "English": {
         "branding_header": "🏢 Branding",
@@ -46,8 +48,10 @@ TRANSLATIONS = {
         "btn_create": "🚀 Create Quiz (1 credit)",
         "success_cert": "🏆 Certification",
         "btn_download_cert": "📄 Download Certificate",
+        "btn_download_html": "🌐 Download Quiz (HTML)",
         "no_credits": "⚠️ Not enough credits!",
-        "q_correct": "Correct:"
+        "q_correct": "Correct:",
+        "preview_label": "Quiz Preview:"
     }
 }
 
@@ -79,7 +83,7 @@ else:
         t = TRANSLATIONS[ui_lang]
 
         st.header(t["branding_header"])
-        company_logo = st.file_uploader(t["logo_label"], type=["png", "jpg"])
+        company_logo = st.file_uploader(t["logo_label"], type=["png", "jpg", "jpeg"])
         if company_logo: st.image(company_logo, width=100)
         
         st.divider()
@@ -123,33 +127,37 @@ else:
             else:
                 st.error(t["no_credits"])
 
-# ВЫВОД РЕЗУЛЬТАТА
+    # ВЫВОД РЕЗУЛЬТАТА
     if st.session_state['quiz']:
         t = TRANSLATIONS[ui_lang]
         st.divider()
-        st.success(f"✅ Тест готов! Остаток кредитов: {st.session_state['credits']}")
+        st.success(f"✅ Тест готов! Остаток: {st.session_state['credits']}")
         
         quiz = st.session_state['quiz']
         
         # --- [START] КНОПКА СКАЧИВАНИЯ HTML ---
         col1, col2 = st.columns([3, 1])
         with col1:
-            st.subheader("Предпросмотр теста:")
+            st.subheader(t["preview_label"])
         with col2:
             course_name_file = st.session_state.get('file_name', 'Course')
-            # Генерируем HTML
-            html_data = logic.create_html_quiz(quiz, course_name_file)
-            st.download_button(
-                label="🌐 Скачать HTML",
-                data=html_data,
-                file_name=f"Quiz_{course_name_file}.html",
-                mime="text/html"
-            )
+            # Генерируем HTML через функцию в logic.py
+            try:
+                html_data = logic.create_html_quiz(quiz, course_name_file)
+                st.download_button(
+                    label=t["btn_download_html"],
+                    data=html_data,
+                    file_name=f"Quiz_{course_name_file}.html",
+                    mime="text/html"
+                )
+            except Exception as e:
+                st.error(f"Ошибка генерации HTML: {e}")
         # --- [END] КНОПКА СКАЧИВАНИЯ HTML ---
 
         for i, q in enumerate(quiz.questions):
             st.write(f"**{i+1}. {q.scenario}**")
             
+            # Защита от ошибок индекса
             if not q.options: continue
             safe_id = q.correct_option_id
             if safe_id >= len(q.options) or safe_id < 0: safe_id = 0
