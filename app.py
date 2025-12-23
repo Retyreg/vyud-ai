@@ -107,42 +107,71 @@ else:
         quiz_difficulty = st.radio(t["difficulty_label"], ["Easy", "Medium", "Hard"])
         quiz_count = st.slider(t["count_label"], 1, 10, 5)
 
-        # --- АДМИН ПАНЕЛЬ v2.0 (С ТАБЛИЦЕЙ) ---
+        # --- АДМИН ПАНЕЛЬ v3.0 (С МАРКЕТОЛОГОМ) ---
         if st.session_state['user'] == ADMIN_EMAIL:
             st.divider()
-            with st.expander("🔐 ADMIN: Пользователи"):
-                # 1. Показываем таблицу всех юзеров
-                try:
-                    # Запрос в базу Supabase через auth
-                    all_users = auth.supabase.table('users_credits').select("*").execute()
-                    if all_users.data:
-                        df = pd.DataFrame(all_users.data)
-                        st.dataframe(df, hide_index=True) # Красивая таблица
-                    else:
-                        st.warning("Пользователей пока нет")
-                except Exception as e:
-                    st.error(f"Ошибка загрузки пользователей: {e}")
-
-                st.markdown("---")
-                # 2. Форма начисления
-                st.write("**Начислить кредиты:**")
-                target_email = st.text_input("Email клиента")
-                amount = st.number_input("Количество", value=50)
+            with st.expander("🔐 ADMIN PANEL", expanded=False):
+                # Вкладки внутри админки
+                tab_users, tab_marketing = st.tabs(["👥 Пользователи", "📢 AI-Маркетолог"])
                 
-                if st.button("💰 Начислить"):
+                # --- ВКЛАДКА 1: ПОЛЬЗОВАТЕЛИ ---
+                with tab_users:
                     try:
-                        res = auth.supabase.table('users_credits').select("*").eq('email', target_email.lower().strip()).execute()
-                        if res.data:
-                            current = res.data[0]['credits']
-                            new_val = current + amount
-                            auth.supabase.table('users_credits').update({'credits': new_val}).eq('email', target_email.lower().strip()).execute()
-                            st.success(f"Успешно! {target_email}: {current} -> {new_val}")
-                            time.sleep(1)
-                            st.rerun() # Обновляем таблицу сразу
+                        all_users = auth.supabase.table('users_credits').select("*").execute()
+                        if all_users.data:
+                            df = pd.DataFrame(all_users.data)
+                            st.dataframe(df, hide_index=True)
                         else:
-                            st.error("Email не найден в базе!")
+                            st.warning("Пользователей пока нет")
                     except Exception as e:
                         st.error(f"Ошибка: {e}")
+
+                    st.markdown("---")
+                    st.write("**Начислить кредиты:**")
+                    c1, c2, c3 = st.columns([2, 1, 1])
+                    with c1: target_email = st.text_input("Email клиента")
+                    with c2: amount = st.number_input("Кол-во", value=50)
+                    with c3: 
+                        st.write("") 
+                        st.write("")
+                        btn_add = st.button("💰 Начислить")
+                    
+                    if btn_add:
+                        try:
+                            res = auth.supabase.table('users_credits').select("*").eq('email', target_email.lower().strip()).execute()
+                            if res.data:
+                                current = res.data[0]['credits']
+                                new_val = current + amount
+                                auth.supabase.table('users_credits').update({'credits': new_val}).eq('email', target_email.lower().strip()).execute()
+                                st.success(f"Успешно! {target_email}: {current} -> {new_val}")
+                                time.sleep(1)
+                                st.rerun()
+                            else:
+                                st.error("Email не найден!")
+                        except Exception as e:
+                            st.error(f"Ошибка: {e}")
+
+                # --- ВКЛАДКА 2: ГЕНЕРАТОР ПОСТОВ ---
+                with tab_marketing:
+                    st.subheader("Генератор контента 🚀")
+                    
+                    m_topic = st.text_input("О чем пишем? (Тема)", "Обновление: теперь поддерживаем видео")
+                    m_context = st.text_area("Детали / Контекст (опционально)", "Добавили загрузку mp4, mov. ИИ сам транскрибирует.")
+                    
+                    col_m1, col_m2 = st.columns(2)
+                    with col_m1:
+                        m_platform = st.selectbox("Платформа", ["Telegram (дружелюбно)", "LinkedIn (деловой)", "Email рассылка"])
+                    with col_m2:
+                        m_tone = st.selectbox("Тон", ["Дружелюбный/Хайповый", "Экспертный/Строгий", "Продающий/Дерзкий"])
+                    
+                    if st.button("✨ Сгенерировать пост"):
+                        with st.spinner("AI-маркетолог пишет текст..."):
+                            try:
+                                # Вызываем функцию из logic.py
+                                post_text = logic.generate_marketing_post(m_topic, m_platform, m_tone, m_context)
+                                st.text_area("Результат (копируй отсюда):", value=post_text, height=300)
+                            except Exception as e:
+                                st.error(f"Ошибка генерации: {e}")
         # ---------------------------------
 
     # Главное окно
