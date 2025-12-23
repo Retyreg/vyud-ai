@@ -1,0 +1,60 @@
+/* --- ОСНОВНОЙ ФОН И ШРИФТЫ --- */
+.stApp {
+    /* Если хочешь светлую тему - удали эту строку, но темная выглядит "дороже" для AI */
+    background-color: #0E1117;
+}
+
+h1, h2, h3 {
+    font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+    font-weight: 700;
+}
+
+/* --- КНОПКИ (Primary) --- */
+/* Делаем главные кнопки (type="primary") красивыми и градиентными */
+div.stButton > button[kind="primary"] {
+    background: linear-gradient(90deg, #4F46E5 0%, #7C3AED 100%);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    padding: 0.6rem 1.2rem;
+    font-weight: 600;
+    transition: all 0.3s ease;
+}
+
+div.stButton > button[kind="primary"]:hover {
+    transform: scale(1.02);
+    box-shadow: 0 4px 12px rgba(124, 58, 237, 0.4);
+}
+
+/* --- КНОПКИ (Secondary) --- */
+div.stButton > button[kind="secondary"] {
+    border: 1px solid #4F46E5;
+    color: #E0E7FF;
+    border-radius: 8px;
+}
+
+/* --- ИНПУТЫ И ПОЛЯ ВВОДА --- */
+/* Делаем их чуть более округлыми */
+.stTextInput > div > div > input {
+    border-radius: 8px;
+}
+
+/* --- АДМИН ПАНЕЛЬ --- */
+/* Выделяем блок админки красной рамкой, если она разблокирована */
+div[data-testid="stExpander"] {
+    border: 1px solid #333;
+    border-radius: 10px;
+    background-color: #1A1C24;
+}
+
+/* --- УБИРАЕМ ЛИШНЕЕ ОТ STREAMLIT --- */
+/* Скрываем гамбургер-меню справа сверху и футер "Made with Streamlit" */
+#MainMenu {visibility: hidden;}
+footer {visibility: hidden;}
+header {visibility: hidden;}
+
+/* --- КАРТОЧКИ --- */
+div[data-testid="stMetricValue"] {
+    font-size: 2rem !important;
+    color: #7C3AED !important;
+}
