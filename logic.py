@@ -23,10 +23,10 @@ from reportlab.lib.utils import ImageReader
 
 # --- МОДЕЛИ ДАННЫХ ---
 class QuizQuestion(BaseModel):
-    scenario: str = Field(..., description="Question text")
-    options: List[str] = Field(..., description="4 options")
-    correct_option_id: int = Field(..., description="Index 0-3")
-    explanation: str = Field(..., description="Explanation")
+    scenario: str = Field(..., description="Question text or scenario")
+    options: List[str] = Field(..., description="List of options")
+    correct_option_id: int = Field(..., description="Index of correct option (0-3)")
+    explanation: str = Field(..., description="Educational explanation")
 
 class Quiz(BaseModel):
     questions: List[QuizQuestion]
@@ -117,7 +117,7 @@ def process_file_to_text(uploaded_file, openai_key, llama_key):
 
 def generate_quiz_ai(text, count, difficulty, lang):
     """Генерирует JSON с тестом через GPT-4o (PRO Промпт)"""
-    Settings.llm = OpenAI(model="gpt-4o", temperature=0.2) # Чуть повысим креативность для сценариев
+    Settings.llm = OpenAI(model="gpt-4o", temperature=0.2)
     
     # Продвинутый промпт для корпоративного обучения
     system_prompt = (
@@ -149,7 +149,6 @@ def generate_quiz_ai(text, count, difficulty, lang):
         llm=Settings.llm
     )
     
-    # Ограничиваем текст (видео бывает длинным, берем самое важное)
     return program(text=text[:50000])
 
 def create_certificate(student_name, course_name, logo_file=None):
@@ -282,7 +281,7 @@ def create_html_quiz(quiz, course_title):
     """
     return html.encode('utf-8')
 
-    def generate_marketing_post(topic, platform, tone, extra_context=""):
+def generate_marketing_post(topic, platform, tone, extra_context=""):
     """Генерирует маркетинговый пост для Vyud AI"""
     Settings.llm = OpenAI(model="gpt-4o", temperature=0.7) # Креативность повыше
     
@@ -300,7 +299,7 @@ def create_html_quiz(quiz, course_title):
         f"{product_info}\n\n"
         f"Task: Write a social media post.\n"
         f"Platform: {platform} (Adjust style: emojis/structure accordingly).\n"
-        f"Tone: {Tone}.\n"
+        f"Tone: {tone}.\n"
         f"Topic/Hook: {topic}\n"
         f"Context/Details: {extra_context}\n\n"
         f"Rules:\n"
@@ -311,12 +310,5 @@ def create_html_quiz(quiz, course_title):
         f"5. Short paragraphs."
     )
     
-    program = LLMTextCompletionProgram.from_defaults(
-        output_cls=Quiz, # Используем тот же класс просто для текстового вывода, или проще вызвать напрямую
-        prompt_template_str=system_prompt, # Здесь мы упростим вызов
-        llm=Settings.llm
-    )
-    
-    # Для простоты текста вызовем чат напрямую, без Pydantic, чтобы получить просто текст
-    response = Settings.llm.complete(system_prompt)
-    return response.text
+    # Простой вызов без структурированного вывода, чтобы получить текст
+    return Settings.llm.complete(system_prompt).text
