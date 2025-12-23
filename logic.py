@@ -281,3 +281,42 @@ def create_html_quiz(quiz, course_title):
     </html>
     """
     return html.encode('utf-8')
+
+    def generate_marketing_post(topic, platform, tone, extra_context=""):
+    """Генерирует маркетинговый пост для Vyud AI"""
+    Settings.llm = OpenAI(model="gpt-4o", temperature=0.7) # Креативность повыше
+    
+    # Промпт знает о продукте ВСЁ
+    product_info = (
+        "Product: Vyud AI.\n"
+        "What it does: Instantly converts PDF documents, Video (mp4/mov), and Audio into interactive quizzes with certificates.\n"
+        "Target Audience: HR Directors, L&D Managers, Business Trainers, Online Schools.\n"
+        "Key Benefits: Saves hours of manual work, creates situational scenarios (Bloom's taxonomy), generates HTML & PDF certificates.\n"
+        "Tone: Friendly, professional, expert."
+    )
+    
+    system_prompt = (
+        f"You are a Senior SMM Manager for an EdTech SaaS. \n"
+        f"{product_info}\n\n"
+        f"Task: Write a social media post.\n"
+        f"Platform: {platform} (Adjust style: emojis/structure accordingly).\n"
+        f"Tone: {Tone}.\n"
+        f"Topic/Hook: {topic}\n"
+        f"Context/Details: {extra_context}\n\n"
+        f"Rules:\n"
+        f"1. Catchy headline.\n"
+        f"2. Focus on value and pain points.\n"
+        f"3. Call to action at the end (Link: https://vyud.tech).\n"
+        f"4. Language: RUSSIAN.\n"
+        f"5. Short paragraphs."
+    )
+    
+    program = LLMTextCompletionProgram.from_defaults(
+        output_cls=Quiz, # Используем тот же класс просто для текстового вывода, или проще вызвать напрямую
+        prompt_template_str=system_prompt, # Здесь мы упростим вызов
+        llm=Settings.llm
+    )
+    
+    # Для простоты текста вызовем чат напрямую, без Pydantic, чтобы получить просто текст
+    response = Settings.llm.complete(system_prompt)
+    return response.text
