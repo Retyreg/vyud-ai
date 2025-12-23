@@ -107,49 +107,105 @@ else:
         quiz_difficulty = st.radio(t["difficulty_label"], ["Easy", "Medium", "Hard"])
         quiz_count = st.slider(t["count_label"], 1, 10, 5)
 
-        # --- АДМИН ПАНЕЛЬ v3.0 (С МАРКЕТОЛОГОМ) ---
+        # --- АДМИН ПАНЕЛЬ (ЗАЩИЩЕННАЯ) ---
         if st.session_state['user'] == ADMIN_EMAIL:
-            st.divider()
-            with st.expander("🔐 ADMIN PANEL", expanded=False):
-                # Вкладки внутри админки
-                tab_users, tab_marketing = st.tabs(["👥 Пользователи", "📢 AI-Маркетолог"])
-                
-                # --- ВКЛАДКА 1: ПОЛЬЗОВАТЕЛИ ---
-                with tab_users:
-                    try:
-                        all_users = auth.supabase.table('users_credits').select("*").execute()
-                        if all_users.data:
-                            df = pd.DataFrame(all_users.data)
-                            st.dataframe(df, hide_index=True)
-                        else:
-                            st.warning("Пользователей пока нет")
-                    except Exception as e:
-                        st.error(f"Ошибка: {e}")
+            
+            # Инициализируем состояние блокировки
+            if 'admin_unlocked' not in st.session_state:
+                st.session_state['admin_unlocked'] = False
 
-                    st.markdown("---")
-                    st.write("**Начислить кредиты:**")
-                    c1, c2, c3 = st.columns([2, 1, 1])
-                    with c1: target_email = st.text_input("Email клиента")
-                    with c2: amount = st.number_input("Кол-во", value=50)
-                    with c3: 
-                        st.write("") 
-                        st.write("")
-                        btn_add = st.button("💰 Начислить")
+            # Если еще не разблокировано - показываем "Дверь"
+            if not st.session_state['admin_unlocked']:
+                st.divider()
+                st.subheader("🛡️ Доступ к системе управления")
+                
+                # Читаем пароль из секретов
+                try:
+                    true_admin_pass = st.secrets["ADMIN_PASSWORD"]
+                except:
+                    st.error("⚠️ В secrets.toml не задан ADMIN_PASSWORD!")
+                    st.stop()
+                
+                # Поле ввода пароля
+                input_pass = st.text_input("Введите Мастер-Пароль", type="password")
+                
+                if st.button("🔓 Войти в Админку"):
+                    if input_pass == true_admin_pass:
+                        st.session_state['admin_unlocked'] = True
+                        st.success("Доступ разрешен!")
+                        st.rerun()
+                    else:
+                        st.error("Неверный пароль!")
+            
+            # Если разблокировано - показываем "Пульт управления"
+            else:
+                st.divider()
+                # Кнопка выхода (блокировки)
+                if st.button("🔒 Заблокировать панель"):
+                    st.session_state['admin_unlocked'] = False
+                    st.rerun()
+
+                with st.expander("🔐 ADMIN PANEL (v3.1 Secure)", expanded=True):
+                    # Вкладки внутри админки
+                    tab_users, tab_marketing = st.tabs(["👥 Пользователи", "📢 AI-Маркетолог"])
                     
-                    if btn_add:
+                    # --- ВКЛАДКА 1: ПОЛЬЗОВАТЕЛИ ---
+                    with tab_users:
                         try:
-                            res = auth.supabase.table('users_credits').select("*").eq('email', target_email.lower().strip()).execute()
-                            if res.data:
-                                current = res.data[0]['credits']
-                                new_val = current + amount
-                                auth.supabase.table('users_credits').update({'credits': new_val}).eq('email', target_email.lower().strip()).execute()
-                                st.success(f"Успешно! {target_email}: {current} -> {new_val}")
-                                time.sleep(1)
-                                st.rerun()
+                            all_users = auth.supabase.table('users_credits').select("*").execute()
+                            if all_users.data:
+                                df = pd.DataFrame(all_users.data)
+                                st.dataframe(df, hide_index=True)
                             else:
-                                st.error("Email не найден!")
+                                st.warning("Пользователей пока нет")
                         except Exception as e:
                             st.error(f"Ошибка: {e}")
+
+                        st.markdown("---")
+                        st.write("**Начислить кредиты:**")
+                        c1, c2, c3 = st.columns([2, 1, 1])
+                        with c1: target_email = st.text_input("Email клиента")
+                        with c2: amount = st.number_input("Кол-во", value=50)
+                        with c3: 
+                            st.write("") 
+                            st.write("")
+                            btn_add = st.button("💰 Начислить")
+                        
+                        if btn_add:
+                            try:
+                                res = auth.supabase.table('users_credits').select("*").eq('email', target_email.lower().strip()).execute()
+                                if res.data:
+                                    current = res.data[0]['credits']
+                                    new_val = current + amount
+                                    auth.supabase.table('users_credits').update({'credits': new_val}).eq('email', target_email.lower().strip()).execute()
+                                    st.success(f"Успешно! {target_email}: {current} -> {new_val}")
+                                    time.sleep(1)
+                                    st.rerun()
+                                else:
+                                    st.error("Email не найден!")
+                            except Exception as e:
+                                st.error(f"Ошибка: {e}")
+
+                    # --- ВКЛАДКА 2: ГЕНЕРАТОР ПОСТОВ ---
+                    with tab_marketing:
+                        st.subheader("Генератор контента 🚀")
+                        
+                        m_topic = st.text_input("О чем пишем? (Тема)", "Обновление: теперь поддерживаем видео")
+                        m_context = st.text_area("Детали / Контекст (опционально)", "Добавили загрузку mp4, mov. ИИ сам транскрибирует.")
+                        
+                        col_m1, col_m2 = st.columns(2)
+                        with col_m1:
+                            m_platform = st.selectbox("Платформа", ["Telegram (дружелюбно)", "LinkedIn (деловой)", "Email рассылка"])
+                        with col_m2:
+                            m_tone = st.selectbox("Тон", ["Дружелюбный/Хайповый", "Экспертный/Строгий", "Продающий/Дерзкий"])
+                        
+                        if st.button("✨ Сгенерировать пост"):
+                            with st.spinner("AI-маркетолог пишет текст..."):
+                                try:
+                                    post_text = logic.generate_marketing_post(m_topic, m_platform, m_tone, m_context)
+                                    st.text_area("Результат (копируй отсюда):", value=post_text, height=300)
+                                except Exception as e:
+                                    st.error(f"Ошибка генерации: {e}")
 
                 # --- ВКЛАДКА 2: ГЕНЕРАТОР ПОСТОВ ---
                 with tab_marketing:
@@ -173,6 +229,43 @@ else:
                             except Exception as e:
                                 st.error(f"Ошибка генерации: {e}")
         # ---------------------------------
+# --- БЛОК PROMO: TELEGRAM БОТ ---
+    st.divider()
+    
+    # Контейнер с легким акцентом
+    with st.container():
+        c_promo_1, c_promo_2 = st.columns([2, 1])
+        
+        with c_promo_1:
+            st.subheader("⚡️ Обучайте сотрудников на бегу")
+            st.markdown(
+                """
+                **Нет времени сидеть за ноутбуком?** Мы запустили **Vyud AI Bot** в Telegram.
+                
+                1. 🤳 **Запишите "кружочек"** с инструкцией (или перешлите голосовое).
+                2. 🤖 ИИ мгновенно превратит его в **тест**.
+                3. 🚀 Перешлите тест сотрудникам за 30 секунд.
+                
+                Идеально для полевых сотрудников, отделов продаж и быстрых апдейтов.
+                """
+            )
+            # Замените 'VyudBot' на реальный юзернейм вашего бота!
+            st.link_button("👉 Открыть Telegram Бота", "https://t.me/VyudAiBot", type="primary")
+
+        with c_promo_2:
+            # Визуализация (можно потом заменить на скриншот телефона)
+            st.info(
+                """
+                **Попробуйте прямо сейчас:**
+                
+                🎥 Запишите видео:
+                *"Коллеги, с понедельника новый скрипт..."*
+                
+                👇
+                
+                ✅ **Тест готов!**
+                """
+            )
 
     # Главное окно
     st.title("🎓 Vyud AI")
