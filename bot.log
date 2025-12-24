@@ -1,0 +1,21 @@
+Traceback (most recent call last):
+  File "/Users/dmitrijvatutov/ai-course-generator/bot.py", line 63, in <module>
+    asyncio.run(main())
+    ~~~~~~~~~~~^^^^^^^^
+  File "/opt/miniconda3/lib/python3.13/asyncio/runners.py", line 195, in run
+    return runner.run(main)
+           ~~~~~~~~~~^^^^^^
+  File "/opt/miniconda3/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/miniconda3/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/Users/dmitrijvatutov/ai-course-generator/bot.py", line 52, in main
+    bot = Bot(token=TOKEN)
+  File "/Users/dmitrijvatutov/ai-course-generator/venv/lib/python3.13/site-packages/aiogram/client/bot.py", line 273, in __init__
+    validate_token(token)
+    ~~~~~~~~~~~~~~^^^^^^^
+  File "/Users/dmitrijvatutov/ai-course-generator/venv/lib/python3.13/site-packages/aiogram/utils/token.py", line 27, in validate_token
+    raise TokenValidationError(msg)
+aiogram.utils.token.TokenValidationError: Token is invalid!
