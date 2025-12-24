@@ -61,3 +61,19 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+    import toml
+from pathlib import Path
+
+# Определяем путь к секретам (поднимаемся выше в .streamlit)
+secrets_path = Path(__file__).parent / ".streamlit" / "secrets.toml"
+
+if secrets_path.exists():
+    secrets = toml.load(secrets_path)
+    TOKEN = secrets.get("BOT_TOKEN")
+else:
+    # Фолбэк на переменные окружения, если файла нет
+    TOKEN = os.getenv("BOT_TOKEN")
+
+if not TOKEN:
+    print("❌ ОШИБКА: Токен бота не найден ни в secrets.toml, ни в env!")
