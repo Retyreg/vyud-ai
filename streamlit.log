@@ -9,7 +9,7 @@
   $ xcode-select --install
   $ pip install watchdog
             
-2025-12-24 10:56:50.975 Uncaught app execution
+2025-12-24 12:49:55.316 Uncaught app execution
 Traceback (most recent call last):
   File "/Users/dmitrijvatutov/ai-course-generator/venv/lib/python3.13/site-packages/streamlit/runtime/scriptrunner/exec_code.py", line 129, in exec_func_with_error_handling
     result = func()
@@ -18,30 +18,6 @@ Traceback (most recent call last):
     ~~~~^^^^^^^^^^^^^^^^^^^^^^^
   File "/Users/dmitrijvatutov/ai-course-generator/app.py", line 4, in <module>
     import logic
-  File "/Users/dmitrijvatutov/ai-course-generator/logic.py", line 16, in <module>
-    from moviepy.editor import VideoFileClip
-ModuleNotFoundError: No module named 'moviepy'
-2025-12-24 10:56:55.605 Uncaught app execution
-Traceback (most recent call last):
-  File "/Users/dmitrijvatutov/ai-course-generator/venv/lib/python3.13/site-packages/streamlit/runtime/scriptrunner/exec_code.py", line 129, in exec_func_with_error_handling
-    result = func()
-  File "/Users/dmitrijvatutov/ai-course-generator/venv/lib/python3.13/site-packages/streamlit/runtime/scriptrunner/script_runner.py", line 671, in code_to_exec
-    exec(code, module.__dict__)  # noqa: S102
-    ~~~~^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/dmitrijvatutov/ai-course-generator/app.py", line 4, in <module>
-    import logic
-  File "/Users/dmitrijvatutov/ai-course-generator/logic.py", line 16, in <module>
-    from moviepy.editor import VideoFileClip
-ModuleNotFoundError: No module named 'moviepy'
-2025-12-24 10:59:39.376 Uncaught app execution
-Traceback (most recent call last):
-  File "/Users/dmitrijvatutov/ai-course-generator/venv/lib/python3.13/site-packages/streamlit/runtime/scriptrunner/exec_code.py", line 129, in exec_func_with_error_handling
-    result = func()
-  File "/Users/dmitrijvatutov/ai-course-generator/venv/lib/python3.13/site-packages/streamlit/runtime/scriptrunner/script_runner.py", line 671, in code_to_exec
-    exec(code, module.__dict__)  # noqa: S102
-    ~~~~^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/dmitrijvatutov/ai-course-generator/app.py", line 4, in <module>
-    import logic
-  File "/Users/dmitrijvatutov/ai-course-generator/logic.py", line 16, in <module>
+  File "/Users/dmitrijvatutov/ai-course-generator/logic.py", line 17, in <module>
     from moviepy.editor import VideoFileClip
 ModuleNotFoundError: No module named 'moviepy'
