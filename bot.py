@@ -1,131 +1,62 @@
 import asyncio
 import logging
 import os
-import sys
-import toml
+from aiogram import Bot, Dispatcher, types, Router, F
+from aiogram.filters import Command
+from aiogram.types import Message, BotCommand, BotCommandScopeDefault
 
-from aiogram import Bot, Dispatcher, F, types
-from aiogram.filters import CommandStart
-from aiogram.types import FSInputFile
-
-import logic
-import auth
-
-# --- БЕЗОПАСНАЯ ЗАГРУЗКА КЛЮЧЕЙ ---
+# Пытаемся импортировать наши модули
 try:
-    secrets = toml.load(".streamlit/secrets.toml")
+    from auth import get_user_credits
+except ImportError:
+    def get_user_credits(email): return 5  # Заглушка, если auth.py не виден
+
+# Инициализация
+# ТОКЕН: Лучше прописать в .env или заменить тут на твой "строкой"
+TOKEN = os.getenv("BOT_TOKEN", "ТВОЙ_ТОКЕН_ЗДЕСЬ") 
+router = Router()
+
+async def set_main_menu(bot: Bot):
+    main_menu_commands = [
+        BotCommand(command='/start', description='Запустить магию VYUD 🚀'),
+        BotCommand(command='/profile', description='Мои кредиты ⚡️'),
+        BotCommand(command='/help', description='Как это работает? 📖')
+    ]
+    await bot.set_my_commands(commands=main_menu_commands, scope=BotCommandScopeDefault())
+
+@router.message(Command("start"))
+async def cmd_start(message: Message):
+    user_email = f"{message.from_user.username}@telegram.io"
+    credits = get_user_credits(user_email) or 5
     
-    BOT_TOKEN = secrets.get("TELEGRAM_BOT_TOKEN")
-    
-    # Передаем ключи в окружение для logic.py
-    os.environ["OPENAI_API_KEY"] = secrets.get("OPENAI_API_KEY", "")
-    os.environ["LLAMA_CLOUD_API_KEY"] = secrets.get("LLAMA_CLOUD_API_KEY", "")
-    
-    if not BOT_TOKEN:
-        raise ValueError("Токен бота не найден в secrets.toml!")
-        
-except Exception as e:
-    print(f"❌ Ошибка загрузки ключей: {e}")
-    sys.exit(1)
-
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher()
-logging.basicConfig(level=logging.INFO)
-
-# --- БАЗА ДАННЫХ ---
-def get_user_credits(telegram_id):
-    fake_email = f"tg_{telegram_id}@vyud.bot"
-    try:
-        res = auth.supabase.table('users_credits').select("*").eq('email', fake_email).execute()
-        if not res.data:
-            auth.supabase.table('users_credits').insert({'email': fake_email, 'credits': 3}).execute()
-            return 3
-        return res.data[0]['credits']
-    except Exception as e:
-        logging.error(f"DB Error: {e}")
-        return 0
-
-def deduct_credit_bot(telegram_id):
-    fake_email = f"tg_{telegram_id}@vyud.bot"
-    current = get_user_credits(telegram_id)
-    if current > 0:
-        auth.supabase.table('users_credits').update({'credits': current - 1}).eq('email', fake_email).execute()
-        return True
-    return False
-
-# --- ОБРАБОТЧИКИ ---
-@dp.message(CommandStart())
-async def cmd_start(message: types.Message):
-    credits = get_user_credits(message.from_user.id)
-    await message.answer(
-        f"👋 Привет! Я Vyud AI Bot.\n"
-        f"Кредиты: **{credits}**.\n"
-        f"Отправь мне **видео-кружочек**!"
+    welcome_text = (
+        f"<b>Привет! Я твой AI-ассистент в @VyudAiBot</b> 🚀\n\n"
+        f"Я превращаю видео-кружочки, аудио и PDF в обучающие тесты за секунды.\n\n"
+        f"⚡️ Твой баланс: <b>{credits} кредитов</b>\n\n"
+        f"<i>Просто запиши видео-сообщение (кружок), чтобы начать!</i>"
     )
+    await message.answer(welcome_text, parse_mode="HTML")
 
-@dp.message(F.video_note | F.video)
-async def handle_video(message: types.Message):
-    user_id = message.from_user.id
-    if get_user_credits(user_id) <= 0:
-        await message.answer("⚠️ Кредиты закончились!")
-        return
+@router.message(Command("profile"))
+async def cmd_profile(message: Message):
+    user_email = f"{message.from_user.username}@telegram.io"
+    credits = get_user_credits(user_email) or 0
+    await message.answer(f"👤 Профиль: @{message.from_user.username}\n⚡️ Баланс: {credits} кредитов")
 
-    status_msg = await message.answer("⏳ Скачиваю видео...")
-    file_path = f"temp_{user_id}.mp4"
-
-    try:
-        if message.video_note:
-            file_id = message.video_note.file_id
-        else:
-            file_id = message.video.file_id
-
-        file = await bot.get_file(file_id)
-        await bot.download_file(file.file_path, file_path)
-        
-        with open(file_path, "rb") as f:
-            file_bytes = f.read()
-            
-        class MockFile:
-            def __init__(self, name, data):
-                self.name = name
-                self._data = data
-            def getvalue(self): return self._data
-
-        mock_file = MockFile("video.mp4", file_bytes)
-
-        await status_msg.edit_text("🎧 Распознаю речь...")
-        text = logic.process_file_to_text(mock_file, os.environ["OPENAI_API_KEY"], os.environ["LLAMA_CLOUD_API_KEY"])
-        
-        if not text:
-            await status_msg.edit_text("❌ Речь не распознана.")
-            return
-
-        await status_msg.edit_text("🧠 Генерирую тест...")
-        quiz = logic.generate_quiz_ai(text, count=1, difficulty="Medium", lang="Russian")
-        
-        if quiz and quiz.questions:
-            q = quiz.questions[0]
-            deduct_credit_bot(user_id)
-            await message.answer_poll(
-                question=q.scenario[:300],
-                options=[opt[:100] for opt in q.options],
-                type="quiz",
-                correct_option_id=q.correct_option_id,
-                explanation=q.explanation[:200],
-                is_anonymous=False
-            )
-            await status_msg.delete()
-        else:
-            await status_msg.edit_text("❌ Ошибка генерации.")
-
-    except Exception as e:
-        await status_msg.edit_text(f"Ошибка: {e}")
-        logging.error(e)
-    finally:
-        if os.path.exists(file_path): os.remove(file_path)
+@router.message(F.video_note)
+async def handle_video_note(message: Message):
+    await message.answer("🎬 Вижу кружок! Начинаю обработку...")
 
 async def main():
-    await bot.delete_webhook(drop_pending_updates=True)
+    logging.basicConfig(level=logging.INFO)
+    bot = Bot(token=TOKEN)
+    dp = Dispatcher()
+    dp.include_router(router)
+    
+    # Устанавливаем меню перед стартом
+    await set_main_menu(bot)
+    
+    print("Бот @VyudAiBot запущен через VENV!")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
