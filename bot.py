@@ -37,6 +37,18 @@ if not TOKEN:
 
 router = Router()
 
+# ... (код выше)
+
+if not TOKEN:
+    raise ValueError("ОШИБКА: BOT_TOKEN не найден в .streamlit/secrets.toml")
+
+# --- ВСТАВЬ ЭТУ ОТЛАДОЧНУЮ СТРОКУ ---
+print(f"🔍 DEBUG TOKEN: '{TOKEN}' (Length: {len(TOKEN)})") 
+# Кавычки в принте покажут, если там есть пробелы!
+
+router = Router()
+# ... (код ниже)
+
 # --- МЕНЮ БОТА ---
 async def set_main_menu(bot: Bot):
     main_menu_commands = [
