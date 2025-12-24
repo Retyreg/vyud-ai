@@ -1,91 +1,65 @@
-import streamlit as st
-from supabase import create_client, Client
+import os
 import logging
+from supabase import create_client, Client
 
-# --- ИНИЦИАЛИЗАЦИЯ SUPABASE ---
-def init_supabase():
+# Инициализация Supabase
+# Ключи берутся из переменных окружения (которые мы грузим в main)
+url = os.environ.get("SUPABASE_URL")
+key = os.environ.get("SUPABASE_KEY")
+
+supabase: Client = None
+if url and key:
     try:
-        url = st.secrets["SUPABASE_URL"]
-        key = st.secrets["SUPABASE_KEY"]
-        return create_client(url, key)
+        supabase = create_client(url, key)
     except Exception as e:
         logging.error(f"Supabase Init Error: {e}")
-        return None
 
-supabase = init_supabase()
+def get_user_credits(email: str) -> int:
+    """Возвращает баланс пользователя. Если юзера нет — создает с 5 кредитами."""
+    if not supabase:
+        return 5  # Режим без базы (тестовый)
 
-# --- ФУНКЦИИ АВТОРИЗАЦИИ (ИСПРАВЛЕННЫЕ) ---
-
-# Теперь принимает 2 аргумента, чтобы не было ошибки TypeError
-def login_user(email, password):
-    """
-    Проверяет существование пользователя.
-    """
     try:
-        # Приводим к нижнему регистру
-        clean_email = email.lower().strip()
+        # Ищем пользователя
+        response = supabase.table("users_credits").select("credits").eq("email", email).execute()
         
-        # Ищем пользователя в базе
-        res = supabase.table('users_credits').select("*").eq('email', clean_email).execute()
+        # Если нашли — отдаем баланс
+        if response.data:
+            return response.data[0]["credits"]
         
-        if res.data:
-            user = res.data[0]
-            # ПРИМЕЧАНИЕ: Если вы добавите колонку 'password' в Supabase,
-            # раскомментируйте строки ниже для проверки пароля:
-            # if user.get('password') == password:
-            #     return user
+        # Если не нашли — создаем нового
+        else:
+            supabase.table("users_credits").insert({"email": email, "credits": 5}).execute()
+            return 5
             
-            # Пока возвращаем пользователя просто по факту наличия email (для Демо)
-            return user
-            
-        return None
     except Exception as e:
-        print(f"Login Error: {e}")
-        return None
+        logging.error(f"DB Error (get_credits): {e}")
+        return 0
 
-# Теперь принимает 2 аргумента
-def register_user(email, password):
-    """
-    Регистрирует нового пользователя
-    """
+def deduct_credits(email: str, amount: int = 1):
+    """Списывает кредиты у пользователя."""
+    if not supabase:
+        return
+
     try:
-        clean_email = email.lower().strip()
+        # 1. Получаем текущий баланс
+        current = get_user_credits(email)
         
-        # 1. Проверяем, есть ли уже такой
-        existing = supabase.table('users_credits').select("*").eq('email', clean_email).execute()
-        if existing.data:
-            return False # Уже есть
+        # 2. Вычитаем (не уходим в минус)
+        new_balance = max(0, current - amount)
+        
+        # 3. Обновляем в базе
+        supabase.table("users_credits").update({"credits": new_balance}).eq("email", email).execute()
+        logging.info(f"Credits deducted for {email}. New balance: {new_balance}")
+        
+    except Exception as e:
+        logging.error(f"DB Error (deduct_credits): {e}")
 
-        # 2. Создаем (Пароль пока не сохраняем в БД, чтобы не ломать старую таблицу)
-        new_user_data = {
-            'email': clean_email,
-            'credits': 3 # Даем 3 кредита при регистрации
-        }
-        
-        supabase.table('users_credits').insert(new_user_data).execute()
+def check_password(email, password):
+    """Проверка пароля админа (Заглушка для MVP)"""
+    admin_email = os.environ.get("ADMIN_EMAIL", "admin@vyud.tech")
+    admin_pass = os.environ.get("ADMIN_PASSWORD", "admin123")
+    
+    if email == admin_email and password == admin_pass:
         return True
-    except Exception as e:
-        print(f"Register Error: {e}")
-        return False
-
-# --- ФУНКЦИИ БАЛАНСА (ДЛЯ БОТА И САЙТА) ---
-def get_user_credits(email):
-    try:
-        clean_email = email.lower().strip()
-        res = supabase.table('users_credits').select("*").eq('email', clean_email).execute()
-        if res.data:
-            return res.data[0]['credits']
-        return 0
-    except:
-        return 0
-
-def deduct_credit(email):
-    try:
-        clean_email = email.lower().strip()
-        current = get_user_credits(clean_email)
-        if current > 0:
-            supabase.table('users_credits').update({'credits': current - 1}).eq('email', clean_email).execute()
-            return True
-        return False
-    except:
-        return False
+    return False
