@@ -7,17 +7,17 @@ from aiogram import Bot, Dispatcher, Router, F
 from aiogram.filters import Command
 from aiogram.types import Message, BotCommand, BotCommandScopeDefault
 
-# --- ИМПОРТ ЛОГИКИ И AUTH ---
-# Оборачиваем в try-except, чтобы видеть понятную ошибку, если имена функций отличаются
+# --- ИМПОРТ ЛОГИКИ ---
 try:
-    from logic import transcribe_audio, generate_quiz_from_text
+    # Импортируем функцию, которая возвращает СТРУКТУРУ
+    from logic import transcribe_audio, generate_quiz_struct
     from auth import get_user_credits, deduct_credits
 except ImportError as e:
-    logging.error(f"CRITICAL: Ошибка импорта модулей! Проверь названия функций в logic.py. Детали: {e}")
-    # Заглушки, чтобы бот не упал при старте, но сообщил об ошибке
-    def transcribe_audio(path): return "SYSTEM ERROR: Logic module not found."
-    def generate_quiz_from_text(text): return "SYSTEM ERROR: Logic module not found."
-    def get_user_credits(email): return 0
+    logging.error(f"CRITICAL IMPORT ERROR: {e}")
+    # Заглушки на случай аварии
+    def transcribe_audio(path): return "Error"
+    def generate_quiz_struct(text): return None
+    def get_user_credits(email): return 99
     def deduct_credits(email, n): pass
 
 # --- КОНФИГУРАЦИЯ ---
@@ -25,124 +25,116 @@ secrets_path = Path(__file__).parent / ".streamlit" / "secrets.toml"
 if secrets_path.exists():
     secrets = toml.load(secrets_path)
     TOKEN = secrets.get("BOT_TOKEN")
-    # Прокидываем ключи в ENV для logic.py
     os.environ["OPENAI_API_KEY"] = secrets.get("OPENAI_API_KEY", "")
     os.environ["SUPABASE_URL"] = secrets.get("SUPABASE_URL", "")
     os.environ["SUPABASE_KEY"] = secrets.get("SUPABASE_KEY", "")
 else:
     TOKEN = os.getenv("BOT_TOKEN")
 
-if not TOKEN:
-    raise ValueError("🔴 ОШИБКА: BOT_TOKEN не найден! Проверь .streamlit/secrets.toml")
+if not TOKEN: raise ValueError("🔴 BOT_TOKEN не найден!")
 
 router = Router()
 
-# ... (код выше)
-
-if not TOKEN:
-    raise ValueError("ОШИБКА: BOT_TOKEN не найден в .streamlit/secrets.toml")
-
-# --- ВСТАВЬ ЭТУ ОТЛАДОЧНУЮ СТРОКУ ---
-print(f"🔍 DEBUG TOKEN: '{TOKEN}' (Length: {len(TOKEN)})") 
-# Кавычки в принте покажут, если там есть пробелы!
-
-router = Router()
-# ... (код ниже)
-
-# --- МЕНЮ БОТА ---
+# --- МЕНЮ ---
 async def set_main_menu(bot: Bot):
-    main_menu_commands = [
-        BotCommand(command='/start', description='Запустить магию 🚀'),
-        BotCommand(command='/profile', description='Баланс ⚡️'),
-        BotCommand(command='/help', description='Помощь 📖')
-    ]
-    await bot.set_my_commands(commands=main_menu_commands, scope=BotCommandScopeDefault())
+    await bot.set_my_commands([
+        BotCommand(command='/start', description='Начать 🚀'),
+        BotCommand(command='/profile', description='Баланс ⚡️')
+    ], scope=BotCommandScopeDefault())
 
-# --- ХЕНДЛЕРЫ (ОБРАБОТЧИКИ) ---
-
+# --- ХЕНДЛЕРЫ ---
 @router.message(Command("start"))
 async def cmd_start(message: Message):
-    user_email = f"{message.from_user.username}@telegram.io"
-    credits = get_user_credits(user_email)
-    
-    text = (
-        f"<b>Привет! Я VYUD AI.</b> 🚀\n\n"
-        f"Я превращаю твои видео-кружочки в готовые тесты.\n"
-        f"⚡️ Твой баланс: <b>{credits} кредитов</b>\n\n"
-        f"👇 <b>Запиши или перешли мне видео-кружочек, чтобы начать!</b>"
+    credits = get_user_credits(f"{message.from_user.username}@telegram.io")
+    await message.answer(
+        f"👋 <b>Привет! Я VYUD AI.</b>\n\n"
+        f"Кидай мне кружочек — я сделаю из него <b>интерактивную викторину!</b>\n"
+        f"⚡️ Баланс: {credits}", parse_mode="HTML"
     )
-    await message.answer(text, parse_mode="HTML")
 
 @router.message(Command("profile"))
 async def cmd_profile(message: Message):
-    user_email = f"{message.from_user.username}@telegram.io"
-    credits = get_user_credits(user_email)
-    await message.answer(f"👤 Пользователь: @{message.from_user.username}\n⚡️ Баланс: {credits} кредитов")
+    credits = get_user_credits(f"{message.from_user.username}@telegram.io")
+    await message.answer(f"👤 @{message.from_user.username}\n⚡️ {credits} кредитов")
 
 @router.message(F.video_note)
 async def handle_video_note(message: Message, bot: Bot):
     user_email = f"{message.from_user.username}@telegram.io"
     
-    # 1. Проверяем кредиты
-    credits = get_user_credits(user_email)
-    if credits <= 0:
-        await message.answer("🚫 Упс! Кредиты закончились. Пополните баланс.")
+    if get_user_credits(user_email) <= 0:
+        await message.answer("🚫 Кредиты закончились! Пополните баланс.")
         return
 
-    # Сообщение о статусе
     status_msg = await message.answer("📥 Скачиваю кружочек...")
-    
-    # Путь для временного файла
     file_id = message.video_note.file_id
-    file_info = await bot.get_file(file_id)
     file_path = f"temp_{message.from_user.id}_{file_id}.mp4"
 
     try:
-        # 2. Скачиваем файл
+        # 1. Скачивание
+        file_info = await bot.get_file(file_id)
         await bot.download_file(file_info.file_path, file_path)
         
-        # 3. Транскрибация (Whisper)
-        await bot.edit_message_text("👂 Слушаю и разбираю речь (Whisper)...", chat_id=message.chat.id, message_id=status_msg.message_id)
+        # 2. Транскрибация
+        await bot.edit_message_text("👂 Слушаю (Whisper)...", chat_id=message.chat.id, message_id=status_msg.message_id)
         transcript = await asyncio.to_thread(transcribe_audio, file_path)
         
-        if "SYSTEM ERROR" in transcript:
-             raise ImportError("Logic module function failed.")
+        if not transcript or "Error" in transcript:
+            await message.answer("❌ Не слышу речи. Попробуй другое видео.")
+            return
 
-        # 4. Генерация теста (GPT)
-        await bot.edit_message_text("🧠 Создаю вопросы и ответы (GPT-4)...", chat_id=message.chat.id, message_id=status_msg.message_id)
-        quiz_content = await asyncio.to_thread(generate_quiz_from_text, transcript)
+        # 3. Генерация (получаем объект, а не текст!)
+        await bot.edit_message_text("🧠 Генерирую викторину...", chat_id=message.chat.id, message_id=status_msg.message_id)
+        quiz_data = await asyncio.to_thread(generate_quiz_struct, transcript)
         
-        # 5. Списываем кредит
+        if not quiz_data or not quiz_data.questions:
+            await message.answer("❌ Не удалось придумать вопросы по этому тексту.")
+            return
+
+        # 4. Результат
         deduct_credits(user_email, 1)
+        await bot.delete_message(chat_id=message.chat.id, message_id=status_msg.message_id)
         
-        # 6. Отправляем результат
-        result_text = (
+        await message.answer(
             f"✅ <b>Готово!</b>\n\n"
-            f"🗣 <b>О чем речь:</b>\n<i>{transcript[:150]}...</i>\n\n"
-            f"📝 <b>Твой Тест:</b>\n{quiz_content}\n\n"
-            f"➖ Списан 1 кредит. Осталось: {credits - 1}"
+            f"🗣 <i>\"{transcript[:200]}...\"</i>\n\n"
+            f"👇 <b>А теперь проверь себя! (Жми на варианты)</b>",
+            parse_mode="HTML"
         )
-        await message.answer(result_text, parse_mode="HTML")
+        
+        # 5. ОТПРАВКА ВИКТОРИНЫ (POLLS)
+        for q in quiz_data.questions:
+            try:
+                # Обрезаем тексты, чтобы не превысить лимиты Телеграма
+                q_text = q.scenario[:299]
+                q_opts = [opt[:99] for opt in q.options]
+                q_expl = q.explanation[:199]
+                
+                await bot.send_poll(
+                    chat_id=message.chat.id,
+                    question=q_text,
+                    options=q_opts,
+                    type='quiz',          # <--- ВОТ ОНО! Режим викторины
+                    correct_option_id=q.correct_option_id,
+                    explanation=q_expl,    # <--- Объяснение появится после ответа
+                    is_anonymous=False     # Видим, кто отвечает
+                )
+                await asyncio.sleep(0.5)   # Небольшая пауза между вопросами
+            except Exception as e:
+                logging.error(f"Poll Error: {e}")
 
     except Exception as e:
-        logging.error(f"Error: {e}")
-        await message.answer(f"❌ Что-то пошло не так: {e}")
+        logging.error(f"Global Error: {e}")
+        await message.answer("❌ Что-то пошло не так.")
     
     finally:
-        # 7. Удаляем временный файл
-        if os.path.exists(file_path):
-            os.remove(file_path)
+        if os.path.exists(file_path): os.remove(file_path)
 
-# --- ТОЧКА ВХОДА ---
 async def main():
     logging.basicConfig(level=logging.INFO)
     bot = Bot(token=TOKEN)
     dp = Dispatcher()
     dp.include_router(router)
-    
     await set_main_menu(bot)
-    
-    print("✅ Бот VYUD запущен! Жду кружочки...")
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
