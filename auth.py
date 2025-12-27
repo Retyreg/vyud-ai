@@ -1,71 +1,74 @@
-import os
-import logging
-from supabase import create_client, Client
+import streamlit as st
+from supabase import create_client
 
-# Инициализация Supabase
-url = os.environ.get("SUPABASE_URL")
-key = os.environ.get("SUPABASE_KEY")
+# --- 1. ПОДКЛЮЧЕНИЕ К SUPABASE ---
+# Берем ключи из secrets.toml
+try:
+    SUPABASE_URL = st.secrets["SUPABASE_URL"]
+    SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
+    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+except Exception as e:
+    # Если ключей нет, работаем в демо-режиме (без базы)
+    print(f"⚠️ Supabase error: {e}")
+    supabase = None
 
-supabase: Client = None
-if url and key:
-    try:
-        supabase = create_client(url, key)
-    except Exception as e:
-        logging.error(f"Supabase Init Error: {e}")
-
-def get_user_credits(email: str) -> int:
-    """Возвращает баланс пользователя."""
-    if not supabase:
-        return 5 
-
-    try:
-        response = supabase.table("users_credits").select("credits").eq("email", email).execute()
-        if response.data:
-            return response.data[0]["credits"]
-        else:
-            # Создаем нового пользователя с бонусом
-            supabase.table("users_credits").insert({"email": email, "credits": 5}).execute()
-            return 5
-    except Exception as e:
-        logging.error(f"DB Error (get_credits): {e}")
-        return 0
-
-def deduct_credits(email: str, amount: int = 1):
-    """Списывает кредиты."""
-    if not supabase:
-        return
-
-    try:
-        current = get_user_credits(email)
-        new_balance = max(0, current - amount)
-        supabase.table("users_credits").update({"credits": new_balance}).eq("email", email).execute()
-    except Exception as e:
-        logging.error(f"DB Error (deduct_credits): {e}")
-
+# --- 2. АВТОРИЗАЦИЯ ---
 def check_password(email, password):
-    """Проверка пароля (Заглушка + Админ)."""
-    # 1. Хардкод админа
-    admin_email = os.environ.get("ADMIN_EMAIL", "admin@vyud.tech")
-    admin_pass = os.environ.get("ADMIN_PASSWORD", "admin123")
-    
+    """
+    Простая проверка. Админа пускаем по паролю,
+    обычных пользователей — просто по email (для MVP).
+    """
+    # Админ (данные в secrets или хардкод для старта)
+    admin_email = st.secrets.get("ADMIN_EMAIL", "admin@vyud.online")
+    admin_pass = st.secrets.get("ADMIN_PASSWORD", "admin")
+
     if email == admin_email and password == admin_pass:
         return True
     
-    # 2. Для обычных юзеров в MVP пускаем всех, у кого пароль не пустой
-    # (В будущем здесь будет supabase.auth.sign_in)
-    if password and len(password) > 3:
+    # Для MVP пускаем всех, кто ввел email
+    if email:
         return True
         
     return False
 
-# --- НОВАЯ ФУНКЦИЯ ДЛЯ APP.PY ---
-def login_user(email, password):
-    """
-    Пытается залогинить юзера. 
-    Возвращает словарь user (или None), чтобы app.py мог сохранить его в session_state.
-    """
-    if check_password(email, password):
-        # Возвращаем объект пользователя
-        return {"email": email, "role": "user"}
+# --- 3. БАЛАНС И СПИСАНИЕ ---
+
+def get_credits(email):
+    """Получить текущий баланс. Если юзера нет — создать."""
+    if not supabase: return 999 # Если базы нет, даем безлимит
     
-    return None
+    try:
+        # Ищем юзера
+        response = supabase.table("users_credits").select("credits").eq("email", email).execute()
+        
+        # Если не найден — создаем с приветственным бонусом (3 кредита)
+        if not response.data:
+            init_credits = 3
+            supabase.table("users_credits").insert({"email": email, "credits": init_credits}).execute()
+            return init_credits
+            
+        return response.data[0]["credits"]
+    except Exception as e:
+        print(f"Ошибка получения кредитов: {e}")
+        return 0
+
+def deduct_credit(email, amount=1):
+    """
+    Списывает кредиты.
+    Возвращает True (успех) или False (нет денег).
+    """
+    if not supabase: return True # Если базы нет, разрешаем
+
+    try:
+        current = get_credits(email)
+        
+        if current < amount:
+            return False # Недостаточно средств
+        
+        # Списываем
+        new_balance = current - amount
+        supabase.table("users_credits").update({"credits": new_balance}).eq("email", email).execute()
+        return True
+    except Exception as e:
+        st.error(f"Ошибка списания: {e}")
+        return False
