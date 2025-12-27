@@ -38,13 +38,12 @@ class Quiz(BaseModel):
 # --- 0. ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ (ШРИФТЫ) ---
 def register_fonts():
     """Регистрирует кириллический шрифт, чтобы PDF не ломался на Linux."""
-    font_path = "assets/DejaVuSans.ttf" # Положи этот файл в папку assets!
+    font_path = "assets/DejaVuSans.ttf" # Убедись, что файл есть в папке assets!
     try:
         if os.path.exists(font_path):
             pdfmetrics.registerFont(TTFont('DejaVu', font_path))
             return 'DejaVu'
         else:
-            # Fallback (будут квадратики на русском, но не упадет)
             return 'Helvetica'
     except:
         return 'Helvetica'
@@ -56,20 +55,16 @@ def compress_audio(input_path):
         if not os.path.exists(input_path): return input_path
         file_size = os.path.getsize(input_path) / (1024 * 1024)
         
-        # Если файл маленький, возвращаем как есть
         if file_size < 24 and not input_path.endswith(('.mp4', '.mov')):
             return input_path
 
         output_path = os.path.splitext(input_path)[0] + "_compressed.mp3"
         
-        # Если это видео -> извлекаем аудио
         if input_path.lower().endswith(('.mp4', '.mov', '.avi', '.mkv')):
             video = VideoFileClip(input_path)
             video.audio.write_audiofile(output_path, bitrate="32k", logger=None)
             video.close()
             return output_path
-        
-        # Если это аудио, но тяжелое -> сжимаем
         elif file_size > 24:
             audio = AudioSegment.from_file(input_path)
             audio.export(output_path, format="mp3", bitrate="32k")
@@ -87,18 +82,15 @@ def process_file_to_text(uploaded_file, openai_key, llama_key):
     is_temp = False
 
     try:
-        # 1. Сохраняем файл на диск
         if isinstance(uploaded_file, str):
-            tmp_path = uploaded_file # Путь (от бота)
+            tmp_path = uploaded_file 
         else:
-            # Объект Streamlit UploadedFile
             file_ext = os.path.splitext(uploaded_file.name)[1].lower()
             with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as tmp:
                 tmp.write(uploaded_file.getvalue())
                 tmp_path = tmp.name
             is_temp = True
 
-        # 2. Обработка по типу
         ext = os.path.splitext(tmp_path)[1].lower()
         
         # --- AUDIO / VIDEO ---
@@ -109,7 +101,6 @@ def process_file_to_text(uploaded_file, openai_key, llama_key):
                 transcription = client.audio.transcriptions.create(
                     model="whisper-1", file=audio_file, response_format="json"
                 )
-            # Чистим сжатый файл
             if processed_path != tmp_path and "_compressed" in processed_path:
                 try: os.remove(processed_path)
                 except: pass
@@ -155,14 +146,14 @@ def generate_quiz_ai(text, count=5, difficulty="Medium", lang="Russian"):
     )
     
     try:
-        # Ограничиваем контекст, чтобы не вылететь по токенам
         return program(text=text[:50000])
     except Exception as e:
         logging.error(f"GPT Error: {e}")
         return None
 
+# [ВОТ ОНА! Та самая функция, которой не хватало]
 def generate_methodologist_hints(text, lang="Russian"):
-    """Генерирует советы для улучшения материала (текстом)."""
+    """Генерирует советы для улучшения материала."""
     try:
         client = OpenAIClient(api_key=os.environ.get("OPENAI_API_KEY"))
         prompt = (
@@ -197,38 +188,32 @@ def generate_marketing_post(topic, platform, tone, context=""):
 # --- 3. ГЕНЕРАЦИЯ ДОКУМЕНТОВ (PDF/HTML) ---
 
 def create_certificate(user_name, course_name):
-    """Генерирует PDF сертификат (с поддержкой кириллицы)."""
+    """Генерирует PDF сертификат."""
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=landscape(letter))
     width, height = landscape(letter)
     
-    # 1. Шрифты
     font_name = register_fonts()
     
-    # 2. Рамка
     c.setStrokeColorRGB(0.2, 0.4, 0.8)
     c.setLineWidth(5)
     c.rect(30, 30, width-60, height-60)
     
-    # 3. Заголовки
     c.setFont(font_name, 36)
     c.drawCentredString(width/2, height - 100, "СЕРТИФИКАТ")
     
     c.setFont(font_name, 18)
     c.drawCentredString(width/2, height - 140, "Подтверждает, что")
     
-    # 4. Имя пользователя
     c.setFont(font_name, 30)
     c.drawCentredString(width/2, height - 200, user_name)
     
-    # 5. Курс
     c.setFont(font_name, 16)
     c.drawCentredString(width/2, height - 250, "Успешно прошел(ла) тестирование по теме:")
     
     c.setFont(font_name, 22)
     c.drawCentredString(width/2, height - 290, course_name)
     
-    # 6. Дата
     date_str = datetime.now().strftime("%d.%m.%Y")
     c.setFont(font_name, 12)
     c.drawString(50, 50, f"Дата: {date_str}")
@@ -239,7 +224,7 @@ def create_certificate(user_name, course_name):
     return buffer.getvalue()
 
 def create_html_quiz(quiz_obj, title):
-    """Генерирует простой HTML файл с тестом."""
+    """Генерирует HTML файл."""
     html_content = f"""
     <!DOCTYPE html>
     <html lang="ru">
@@ -266,7 +251,6 @@ def create_html_quiz(quiz_obj, title):
             <div class="options">
         """
         for j, opt in enumerate(q.options):
-            is_correct = 'true' if j == q.correct_option_id else 'false'
             html_content += f"""
                 <label>
                     <input type="radio" name="q{i}" value="{j}" onclick="check({i}, {j}, {q.correct_option_id})"> 
@@ -301,7 +285,8 @@ def create_html_quiz(quiz_obj, title):
     return html_content
 
 # --- 4. АДАПТЕРЫ ДЛЯ БОТА ---
-# Эти функции нужны, чтобы bot.py мог вызывать их одной строкой
-
 def transcribe_audio(file_path):
-    """Обертка для транскрибации файла по пути."""
+    return process_file_to_text(file_path, os.environ.get("OPENAI_API_KEY"), None)
+
+def generate_quiz_struct(text):
+    return generate_quiz_ai(text)

@@ -7,6 +7,35 @@ import auth
 # --- КОНФИГУРАЦИЯ СТРАНИЦЫ ---
 st.set_page_config(page_title="VYUD AI", page_icon="🎓", layout="wide")
 
+# --- ПРИНУДИТЕЛЬНАЯ СВЕТЛАЯ ТЕМА (CSS HACK) ---
+st.markdown("""
+    <style>
+        /* Переопределяем переменные темы */
+        :root {
+            --primary-color: #007AFF;
+            --background-color: #FFFFFF;
+            --secondary-background-color: #F0F2F6;
+            --text-color: #262730;
+            --font: sans-serif;
+        }
+        /* Жестко красим фон в белый */
+        [data-testid="stAppViewContainer"] {
+            background-color: #FFFFFF;
+        }
+        [data-testid="stHeader"] {
+            background-color: rgba(0,0,0,0);
+        }
+        /* Красим сайдбар в светло-серый */
+        [data-testid="stSidebar"] {
+            background-color: #F0F2F6;
+        }
+        /* Текст делаем черным */
+        h1, h2, h3, h4, h5, h6, p, li, label, div {
+            color: #262730 !important;
+        }
+    </style>
+""", unsafe_allow_html=True)
+
 # Загружаем CSS
 try:
     with open("style.css") as f:
