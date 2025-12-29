@@ -1,352 +1,181 @@
 import streamlit as st
-import pandas as pd
 import time
-import logic
+import os
+
+# Наши модули
 import auth
+import logic
 
-# --- 1. КОНФИГУРАЦИЯ СТРАНИЦЫ ---
-st.set_page_config(page_title="VYUD AI", page_icon="🎓", layout="wide")
+# --- НАСТРОЙКИ СТРАНИЦЫ ---
+st.set_page_config(
+    page_title="Vyud AI Platform",
+    page_icon="⚡",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-# --- 2. CSS HACK: ЯДЕРНЫЙ ВАРИАНТ ---
+# CSS для красоты
 st.markdown("""
-    <style>
-        /* 1. ПРИНУДИТЕЛЬНЫЙ БЕЛЫЙ ФОН ДЛЯ ВСЕГО */
-        .stApp, .stApp > header {
-            background-color: #FFFFFF !important;
-        }
-        [data-testid="stSidebar"] {
-            background-color: #F8F9FA !important;
-            border-right: 1px solid #E6E6E6;
-        }
-        
-        /* 2. ТЕКСТ - ЧЕРНЫЙ ВЕЗДЕ */
-        h1, h2, h3, h4, h5, h6, p, li, span, label, div, .stMarkdown {
-            color: #000000 !important;
-        }
-
-        /* 3. ЭКСПАНДЕРЫ (ВЫПАДАЮЩИЕ СПИСКИ) - ЛЕЧЕНИЕ */
-        /* Заголовок */
-        .streamlit-expanderHeader {
-            background-color: #FFFFFF !important;
-            color: #000000 !important;
-            border: 1px solid #cccccc !important;
-        }
-        /* Внутренности (Самое важное место) */
-        [data-testid="stExpanderDetails"] {
-            background-color: #FFFFFF !important;
-            color: #000000 !important;
-            border: 1px solid #cccccc !important;
-            border-top: none !important;
-        }
-        /* Иконка стрелочки */
-        .streamlit-expanderHeader svg {
-            fill: #000000 !important;
-        }
-        
-        /* 4. УБИВАЕМ СТАНДАРТНЫЕ ЦВЕТА st.info / st.success */
-        /* Фон для всех уведомлений делаем очень светлым */
-        [data-testid="stAlert"] {
-            background-color: #f0f2f6 !important;
-            color: #000000 !important;
-            border: 1px solid #d1d5db !important;
-        }
-        /* Текст внутри уведомлений */
-        [data-testid="stAlert"] * {
-            color: #000000 !important;
-        }
-        /* Иконки внутри уведомлений */
-        [data-testid="stAlert"] svg {
-            fill: #000000 !important;
-        }
-
-        /* 5. ПОЛЯ ВВОДА */
-        input, textarea, select {
-            color: #000000 !important;
-            background-color: #FFFFFF !important;
-        }
-        .stTextInput > div > div {
-            background-color: #FFFFFF !important;
-            color: #000000 !important;
-            border-color: #cccccc !important;
-        }
-
-        /* 6. КНОПКИ */
-        button {
-            background-color: #FFFFFF !important;
-            color: #000000 !important;
-            border: 1px solid #cccccc !important;
-        }
-        button[kind="primary"] {
-            background-color: #FF4B4B !important;
-            color: #FFFFFF !important;
-            border: none !important;
-        }
-        button[kind="primary"] p {
-            color: #FFFFFF !important;
-        }
-    </style>
+<style>
+    .stButton>button { width: 100%; border-radius: 8px; font-weight: bold; }
+    .css-1d391kg { padding-top: 1rem; }
+</style>
 """, unsafe_allow_html=True)
 
-# Загружаем внешний CSS (если есть)
+# --- ИНИЦИАЛИЗАЦИЯ СЕССИИ ---
+if "user" not in st.session_state:
+    st.session_state.user = None
+if "generated_quiz" not in st.session_state:
+    st.session_state.generated_quiz = None
+if "quiz_text_source" not in st.session_state:
+    st.session_state.quiz_text_source = None
+
+# Достаем ключи API
 try:
-    with open("style.css") as f:
-        st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+    OPENAI_KEY = st.secrets["OPENAI_API_KEY"]
+    LLAMA_KEY = st.secrets["LLAMA_CLOUD_API_KEY"]
 except:
-    pass 
+    st.error("❌ Не найдены API ключи в secrets.toml!")
+    st.stop()
 
-# --- 3. БОКОВАЯ ПАНЕЛЬ ---
+# --- 1. БОКОВАЯ ПАНЕЛЬ (АВТОРИЗАЦИЯ) ---
 with st.sidebar:
-    try:
-        st.image("assets/logo.png", width=200)
-    except:
-        st.title("VYUD AI")
-    st.markdown("---")
-
-# --- 4. ЛОГИКА АВТОРИЗАЦИИ ---
-if 'user' not in st.session_state:
-    st.session_state['user'] = None
-
-if not st.session_state['user']:
-    # ЭКРАН ВХОДА
-    tab1, tab2 = st.tabs(["Вход", "Регистрация"])
+    st.image("https://cdn-icons-png.flaticon.com/512/4712/4712035.png", width=60)
+    st.title("Vyud AI")
+    st.caption("AI-платформа для L&D и HR")
     
-    with tab1:
-        email = st.text_input("Email", key="login_email")
-        password = st.text_input("Пароль", type="password", key="login_pass")
-        if st.button("Войти", key="btn_login"):
-            user = auth.login_user(email, password)
-            if user:
-                st.session_state['user'] = user['email']
+    st.divider()
+
+    if not st.session_state.user:
+        st.subheader("Вход в систему")
+        email = st.text_input("Email")
+        password = st.text_input("Пароль", type="password")
+        
+        if st.button("Войти", type="primary"):
+            if auth.check_password(email, password):
+                st.session_state.user = email
                 st.rerun()
             else:
-                st.error("Ошибка входа")
-
-    with tab2:
-        new_email = st.text_input("Email", key="reg_email")
-        new_pass = st.text_input("Пароль", type="password", key="reg_pass")
-        if st.button("Создать аккаунт", key="btn_reg"):
-            if auth.register_user(new_email, new_pass):
-                st.success("Регистрация успешна! Теперь войдите.")
-            else:
-                st.error("Ошибка регистрации")
-
-else:
-    # --- ОСНОВНОЕ ПРИЛОЖЕНИЕ ---
-    with st.sidebar:
-        st.write(f"Вы вошли как: **{st.session_state['user']}**")
-        try:
-            credits = auth.get_user_credits(st.session_state['user'])
-            st.metric("Доступно кредитов", credits)
-        except:
-            st.metric("Доступно кредитов", 0)
-
-        if st.button("Выйти", key="btn_logout"):
-            st.session_state['user'] = None
+                st.error("Неверный email или пароль")
+    else:
+        st.success(f"👤 {st.session_state.user}")
+        
+        # Баланс
+        credits = auth.get_credits(st.session_state.user)
+        st.metric("Баланс кредитов", credits)
+        
+        if st.button("Выйти"):
+            st.session_state.user = None
+            st.session_state.generated_quiz = None
             st.rerun()
-
-    st.title("Генератор Обучения AI 🧠")
-    st.caption("Превратите документы и видео в интерактивные тесты за секунды.")
-
-    # ЗАГРУЗКА ФАЙЛА
-    uploaded_file = st.file_uploader(
-        "Загрузите материал (PDF, Video, Audio)", 
-        type=['pdf', 'docx', 'txt', 'pptx', 'mp4', 'mov', 'mp3', 'wav'],
-        key="main_uploader"
-    )
-
-    if uploaded_file:
-        st.success(f"Файл загружен: {uploaded_file.name}")
-        
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            q_count = st.slider("Количество вопросов", 1, 10, 5, key="slider_count")
-        with col2:
-            difficulty = st.radio("Сложность", ["Easy", "Medium", "Hard"], key="radio_diff")
-        with col3:
-            lang = st.selectbox("Язык", ["Russian", "English", "Kazakh"], key="select_lang")
-
-        if st.button("🚀 Создать курс", type="primary", key="btn_generate_course"):
-            current_credits = auth.get_user_credits(st.session_state['user'])
             
-            if current_credits > 0:
-                with st.spinner("ИИ анализирует материал... (это может занять до 1 минуты)"):
-                    try:
-                        # 1. Достаем текст
-                        text = logic.process_file_to_text(
-                            uploaded_file, 
-                            st.secrets["OPENAI_API_KEY"], 
-                            st.secrets.get("LLAMA_CLOUD_API_KEY", "")
-                        )
-                        
-                        # 2. Генерируем JSON тест
-                        quiz_data = logic.generate_quiz_ai(text, q_count, difficulty, lang)
-                        
-                        # 3. Подсказки методолога
-                        hints = logic.generate_methodologist_hints(text, lang)
+    st.divider()
+    st.info("ℹ️ MVP v1.0: Поддерживает PDF, DOCX, MP4, MP3.")
 
-                        # 4. Сохраняем
-                        st.session_state['quiz_data'] = quiz_data
-                        st.session_state['course_name'] = uploaded_file.name
-                        st.session_state['methodologist_hints'] = hints
-                        st.session_state['quiz_finished'] = False
-                        st.session_state['quiz_score'] = 0
-                        
-                        # 5. Списываем
-                        auth.deduct_credit(st.session_state['user'])
-                        
-                        st.success("Готово! Прокрутите вниз.")
-                        time.sleep(1)
-                        st.rerun()
-                        
-                    except Exception as e:
-                        st.error(f"Ошибка: {e}")
-            else:
-                st.error("Недостаточно кредитов! Пополните баланс.")
+# --- 2. ОСНОВНОЙ ИНТЕРФЕЙС ---
 
-    # ОТОБРАЖЕНИЕ РЕЗУЛЬТАТА
-    if st.session_state.get('quiz_data'):
-        st.divider()
-        st.subheader(f"🎓 Тест по материалу: {st.session_state.get('course_name')}")
+if not st.session_state.user:
+    st.warning("🔒 Пожалуйста, авторизуйтесь в боковой панели, чтобы начать работу.")
+    st.stop()
+
+# Вкладки функционала
+tab1, tab2 = st.tabs(["🎓 Генератор Обучения", "📢 Маркетинг Помощник"])
+
+# === ВКЛАДКА 1: ГЕНЕРАТОР ТЕСТОВ ===
+with tab1:
+    st.header("Создание интерактивного курса")
+    
+    col1, col2 = st.columns([1, 2])
+    
+    with col1:
+        st.subheader("1. Загрузка материала")
+        uploaded_file = st.file_uploader("Файл (PDF, Video, Audio)", type=['pdf', 'docx', 'txt', 'mp4', 'mp3', 'm4a'])
         
-        # [FIX] БЛОК СОВЕТОВ - ЗАМЕНИЛИ st.info на КАСТОМНЫЙ HTML
-        if st.session_state.get('methodologist_hints'):
-             with st.expander("💡 Советы AI-Методолога", expanded=False):
-                # РИСУЕМ СВОЙ БЛОК, ЧТОБЫ ЦВЕТА НЕ ЛОМАЛИСЬ
-                st.markdown(f"""
-                <div style="background-color: #e6f3ff; padding: 15px; border-radius: 5px; border: 1px solid #b3d9ff; color: #000;">
-                    {st.session_state['methodologist_hints']}
-                </div>
-                """, unsafe_allow_html=True)
-
-        quiz = st.session_state['quiz_data']
+        st.subheader("2. Настройки AI")
+        q_count = st.slider("Количество вопросов", 3, 10, 5)
+        difficulty = st.select_slider("Сложность", options=["Easy", "Medium", "Hard"], value="Medium")
+        lang = st.selectbox("Язык курса", ["Russian", "English", "Kazakh"])
         
-        # ЕСЛИ ТЕСТ НЕ СДАН -> ФОРМА
-        if not st.session_state.get('quiz_finished', False):
-            with st.form("quiz_form"):
-                score = 0
-                user_answers = {}
-                for i, q in enumerate(quiz.questions):
-                    st.markdown(f"**{i+1}. {q.scenario}**")
-                    user_answers[i] = st.radio("Выберите ответ:", q.options, key=f"quiz_q_{i}", index=None)
-                    st.markdown("---")
-                
-                submitted = st.form_submit_button("Завершить тестирование")
-                
-                if submitted:
-                    for i, q in enumerate(quiz.questions):
-                        if user_answers.get(i) == q.options[q.correct_option_id]:
-                            score += 1
+        generate_btn = st.button("✨ Сгенерировать курс (1 кредит)", type="primary")
+
+    with col2:
+        # Логика генерации
+        if generate_btn and uploaded_file:
+            if auth.deduct_credit(st.session_state.user, 1):
+                status = st.status("🚀 Запускаем AI двигатели...", expanded=True)
+                try:
+                    # 1. Извлечение текста
+                    status.write("📂 Читаем файл и распознаем речь...")
+                    text_content = logic.process_file_to_text(uploaded_file, OPENAI_KEY, LLAMA_KEY)
+                    st.session_state.quiz_text_source = text_content[:1000] + "..."
                     
-                    st.session_state['quiz_score'] = score
-                    if score >= len(quiz.questions) * 0.7:
-                        st.session_state['quiz_finished'] = True
-                        st.rerun()
-                    else:
-                        st.error(f"Тест не сдан. Результат: {score}/{len(quiz.questions)}. Попробуйте еще раз.")
-        
-        # ЕСЛИ ТЕСТ СДАН -> РЕЗУЛЬТАТЫ
-        else:
-            # КАСТОМНЫЙ БЛОК УСПЕХА
-            st.markdown(f"""
-            <div style="background-color: #d1fae5; padding: 15px; border-radius: 5px; border: 1px solid #34d399; color: #064e3b; margin-bottom: 10px;">
-                🎉 Поздравляем! Вы сдали тест. Результат: <b>{st.session_state['quiz_score']}/{len(quiz.questions)}</b>
-            </div>
-            """, unsafe_allow_html=True)
-            st.balloons()
+                    # 2. Генерация теста
+                    status.write("🧠 Проектируем сценарии обучения...")
+                    quiz_data = logic.generate_quiz_ai(text_content, q_count, difficulty, lang)
+                    st.session_state.generated_quiz = quiz_data
+                    
+                    status.update(label="✅ Готово! Курс создан.", state="complete", expanded=False)
+                    
+                except Exception as e:
+                    status.update(label="❌ Ошибка!", state="error")
+                    st.error(f"Произошла ошибка: {e}")
+            else:
+                st.error("💳 Недостаточно кредитов! Пожалуйста, пополните баланс.")
+
+        # Отображение результатов
+        if st.session_state.generated_quiz:
+            quiz = st.session_state.generated_quiz
+            st.success("Курс успешно сгенерирован!")
+            
+            with st.expander("👀 Предпросмотр вопросов"):
+                for idx, q in enumerate(quiz.questions):
+                    st.markdown(f"**{idx+1}. {q.scenario}**")
+                    for opt in q.options:
+                        st.text(f"- {opt}")
+                    st.caption(f"💡 *{q.explanation}*")
+            
+            st.divider()
+            st.subheader("3. Экспорт материалов")
             
             c1, c2 = st.columns(2)
+            
             with c1:
-                try:
-                    cert_pdf = logic.create_certificate(
-                        st.session_state['user'], 
-                        st.session_state['course_name']
-                    )
-                    st.download_button(
-                        label="📜 Скачать Сертификат",
-                        data=cert_pdf,
-                        file_name="certificate.pdf",
-                        mime="application/pdf",
-                        key="dl_cert"
-                    )
-                except Exception as e:
-                    st.error(f"Ошибка сертификата: {e}")
+                # Скачать HTML
+                course_name = f"Course_{int(time.time())}"
+                html_data = logic.create_html_quiz(quiz, course_name)
+                st.download_button(
+                    label="📥 Скачать HTML-тест",
+                    data=html_data,
+                    file_name=f"{course_name}.html",
+                    mime="text/html"
+                )
             
             with c2:
-                if st.button("🔄 Пройти заново"):
-                    st.session_state['quiz_finished'] = False
-                    st.rerun()
+                # Скачать PDF Сертификат
+                student_name = st.text_input("Имя студента для сертификата", "Иван Иванов")
+                if st.button("📄 Сгенерировать PDF Сертификат"):
+                    pdf_buffer = logic.create_certificate(student_name, "Корпоративное обучение")
+                    st.download_button(
+                        label="⬇️ Скачать PDF",
+                        data=pdf_buffer,
+                        file_name="Certificate.pdf",
+                        mime="application/pdf"
+                    )
 
-        # БЛОК HTML
-        try:
-            with st.expander("🔧 Дополнительно (LMS Export)"):
-                html_data = logic.create_html_quiz(quiz, st.session_state['course_name'])
-                st.download_button(
-                    "🌐 Скачать как HTML",
-                    data=html_data.encode('utf-8'),
-                    file_name="quiz.html",
-                    mime="text/html",
-                    key="dl_html"
-                )
-        except:
-            pass
-
-    # --- PROMO ---
-    st.divider()
-    with st.container():
-        c_promo_1, c_promo_2 = st.columns([2, 1])
-        with c_promo_1:
-            st.subheader("⚡️ Vyud AI Bot")
-            st.markdown("Запишите видео -> получите тест.")
-            st.link_button("👉 Открыть Telegram Бота", "https://t.me/VyudAiBot", type="primary")
-        with c_promo_2:
-            st.markdown("""
-            <div style="background-color: #e6f3ff; padding: 10px; border-radius: 5px; color: #000;">
-                🎥 Работает с Video Notes
-            </div>
-            """, unsafe_allow_html=True)
-
-    # Админка
-    try:
-        admin_email_conf = st.secrets.get("ADMIN_EMAIL", "admin@vyud.tech").lower().strip()
-    except:
-        admin_email_conf = "admin@vyud.tech"
-
-    current_user_norm = st.session_state['user'].lower().strip() if st.session_state['user'] else ""
-
-    if current_user_norm == admin_email_conf:
-        if 'admin_unlocked' not in st.session_state: st.session_state['admin_unlocked'] = False
-        
-        if not st.session_state['admin_unlocked']:
-            st.divider()
-            st.subheader("🛡️ Admin Access")
-            input_pass = st.text_input("Password", type="password", key="adm_pass")
-            if st.button("Login"):
-                if input_pass == st.secrets.get("ADMIN_PASSWORD", "admin"):
-                    st.session_state['admin_unlocked'] = True
-                    st.rerun()
-                else: st.error("Wrong pass")
+# === ВКЛАДКА 2: МАРКЕТИНГ ===
+with tab2:
+    st.header("Генератор постов для соцсетей")
+    st.caption("Помогает продвигать созданные курсы")
+    
+    m_topic = st.text_input("О чем пишем?", "Запуск нового курса по безопасности")
+    c1, c2 = st.columns(2)
+    m_platform = c1.selectbox("Платформа", ["LinkedIn", "Instagram", "Telegram", "Email Newsletter"])
+    m_tone = c2.selectbox("Тон", ["Professional", "Friendly", "Urgent", "Educational"])
+    
+    if st.button("✍️ Написать пост (1 кредит)"):
+        if auth.deduct_credit(st.session_state.user, 1):
+            with st.spinner("Копирайтер пишет текст..."):
+                post_text = logic.generate_marketing_post(m_topic, m_platform, m_tone)
+                st.text_area("Результат:", post_text, height=300)
         else:
-            st.divider()
-            st.subheader("🔐 ADMIN PANEL")
-            tab_users, tab_marketing = st.tabs(["👥 Пользователи", "📢 AI-Маркетолог"])
-            
-            with tab_users:
-                try:
-                    all_users = auth.supabase.table('users_credits').select("*").execute()
-                    if all_users.data:
-                        st.dataframe(pd.DataFrame(all_users.data), hide_index=True)
-                except: st.warning("Нет данных")
-                
-                c1, c2 = st.columns(2)
-                with c1: t_email = st.text_input("Email", key="adm_e")
-                with c2: 
-                    if st.button("💰 +50 Кредитов"):
-                        res = auth.supabase.table('users_credits').select("*").eq('email', t_email).execute()
-                        if res.data:
-                            auth.supabase.table('users_credits').update({'credits': res.data[0]['credits'] + 50}).eq('email', t_email).execute()
-                            st.success("Начислено!")
-
-            with tab_marketing:
-                topic = st.text_input("Тема поста")
-                if st.button("Генерация"):
-                    st.text_area("Результат", logic.generate_marketing_post(topic, "Telegram", "Hype"))
+            st.error("Недостаточно кредитов.")

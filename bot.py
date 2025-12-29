@@ -5,136 +5,147 @@ import toml
 from pathlib import Path
 from aiogram import Bot, Dispatcher, Router, F
 from aiogram.filters import Command
-from aiogram.types import Message, BotCommand, BotCommandScopeDefault
+from aiogram.types import Message
 
-# --- ИМПОРТ ЛОГИКИ ---
-try:
-    from logic import transcribe_audio, generate_quiz_struct
-    # [FIX] Исправил имя функции: deduct_credit (без 's' на конце, как в auth.py)
-    from auth import get_credits, deduct_credit 
-except ImportError as e:
-    logging.error(f"CRITICAL IMPORT ERROR: {e}")
-    # Заглушки
-    def transcribe_audio(path): return "Error"
-    def generate_quiz_struct(text): return None
-    def get_credits(email): return 99
-    def deduct_credit(email, n): pass
+# Импортируем нашу новую логику
+import logic 
+import auth
 
-# --- КОНФИГУРАЦИЯ ---
+# --- НАСТРОЙКИ ---
 secrets_path = Path(__file__).parent / ".streamlit" / "secrets.toml"
 if secrets_path.exists():
     secrets = toml.load(secrets_path)
-    TOKEN = secrets.get("TELEGRAM_BOT_TOKEN") or secrets.get("BOT_TOKEN")
-    os.environ["OPENAI_API_KEY"] = secrets.get("OPENAI_API_KEY", "")
-else:
+    TOKEN = secrets.get("TELEGRAM_BOT_TOKEN")
+    # Устанавливаем ключи в переменные окружения, чтобы logic.py мог их найти, 
+    # если они не передаются явно, или передаем их вручную (как сделано ниже)
+    OPENAI_KEY = secrets.get("OPENAI_API_KEY", "")
+    LLAMA_KEY = secrets.get("LLAMA_CLOUD_API_KEY", "")
+else: 
     TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-
-if not TOKEN: raise ValueError("🔴 BOT_TOKEN не найден!")
+    OPENAI_KEY = os.getenv("OPENAI_API_KEY")
+    LLAMA_KEY = os.getenv("LLAMA_CLOUD_API_KEY")
 
 router = Router()
-bot = Bot(token=TOKEN) # Инициализируем бота глобально для доступа в хендлерах
+bot = Bot(token=TOKEN)
 
-# --- МЕНЮ ---
-async def set_main_menu(bot: Bot):
-    await bot.set_my_commands([
-        BotCommand(command='/start', description='Начать 🚀'),
-        BotCommand(command='/profile', description='Баланс ⚡️')
-    ], scope=BotCommandScopeDefault())
+# --- АДАПТЕР ФАЙЛОВ ---
+class LocalFileWrapper:
+    """
+    Превращает локальный файл (путь) в объект, похожий на UploadedFile из Streamlit.
+    Это нужно, чтобы logic.process_file_to_text могла с ним работать.
+    """
+    def __init__(self, path):
+        self.name = path
+        with open(path, "rb") as f:
+            self._data = f.read()
 
-# --- ХЕНДЛЕРЫ ---
+    def getvalue(self):
+        return self._data
+
+# --- ОБРАБОТЧИКИ ---
+
 @router.message(Command("start"))
-async def cmd_start(message: Message):
-    credits = get_credits(f"{message.from_user.username}@telegram.io")
-    await message.answer(
-        f"👋 <b>Привет! Я VYUD AI.</b>\n\n"
-        f"Кидай мне кружочек — я сделаю из него <b>интерактивную викторину!</b>\n"
-        f"⚡️ Баланс: {credits}", parse_mode="HTML"
-    )
+async def start(m: Message): 
+    await m.answer("👋 Привет! Я VYUD AI. Пришли мне файл видео-кружочек, (PDF/DOCX) или голосовое сообщение.")
 
-@router.message(Command("profile"))
-async def cmd_profile(message: Message):
-    credits = get_credits(f"{message.from_user.username}@telegram.io")
-    await message.answer(f"👤 @{message.from_user.username}\n⚡️ {credits} кредитов")
-
-@router.message(F.video_note)
-async def handle_video_note(message: Message):
-    user_email = f"{message.from_user.username}@telegram.io"
+@router.message(F.video_note | F.voice | F.audio | F.video | F.document)
+async def handle_files(m: Message):
+    # Создаем "виртуального" пользователя для базы данных
+    user_email = f"{m.from_user.username or m.from_user.id}@telegram.vyud"
     
-    # Проверка баланса
-    if get_credits(user_email) <= 0:
-        await message.answer("🚫 Кредиты закончились! Пополните баланс.")
+    # 1. Проверка баланса
+    # Важно: auth.get_credits синхронная функция, но она быстрая (если база не тупит)
+    # Для идеального асинхрона лучше тоже заворачивать в to_thread, но для MVP ок.
+    if auth.get_credits(user_email) <= 0: 
+        await m.answer("🚫 Недостаточно кредитов. Попросите админа пополнить баланс.")
         return
+        
+    msg = await m.answer("📥 Скачиваю файл...")
+    
+    # Определение ID файла
+    if m.video_note: fid = m.video_note.file_id
+    elif m.voice: fid = m.voice.file_id
+    elif m.audio: fid = m.audio.file_id
+    elif m.video: fid = m.video.file_id
+    elif m.document: fid = m.document.file_id
+    else: return
 
-    status_msg = await message.answer("📥 Скачиваю кружочек...")
-    file_id = message.video_note.file_id
-    file_path = f"temp_{message.from_user.id}_{file_id}.mp4"
-
+    # Формирование временного пути
+    # Мы не знаем расширение заранее, aiogram поможет, но для простоты берем временное имя
+    path = f"temp_bot_{m.from_user.id}_{fid}" 
+    
     try:
-        # 1. Скачивание
-        file_info = await bot.get_file(file_id)
-        await bot.download_file(file_info.file_path, file_path)
+        # Скачивание
+        f_info = await bot.get_file(fid)
+        # Получаем реальное расширение файла из Telegram
+        ext = f_info.file_path.split('.')[-1]
+        path = f"{path}.{ext}"
         
-        # 2. Транскрибация
-        await bot.edit_message_text("👂 Слушаю (Whisper)...", chat_id=message.chat.id, message_id=status_msg.message_id)
-        transcript = await asyncio.to_thread(transcribe_audio, file_path)
+        await bot.download_file(f_info.file_path, path)
         
-        if not transcript or "Error" in transcript:
-            await message.answer("❌ Не слышу речи или файл поврежден.")
+        # 2. Обработка (Транскрибация / Парсинг)
+        await bot.edit_message_text("👂 Изучаю содержимое (🤖 AI работает на тебя. Чуть-чуть вашего терпения)...", m.chat.id, msg.message_id)
+        
+        # Создаем обертку для logic.py
+        wrapped_file = LocalFileWrapper(path)
+        
+        # Запускаем тяжелую синхронную функцию в отдельном потоке
+        text = await asyncio.to_thread(logic.process_file_to_text, wrapped_file, OPENAI_KEY, LLAMA_KEY)
+        
+        if not text:
+            await bot.edit_message_text("❌ Не удалось извлечь текст.", m.chat.id, msg.message_id)
             return
 
-        # 3. Генерация
-        await bot.edit_message_text("🧠 Генерирую викторину...", chat_id=message.chat.id, message_id=status_msg.message_id)
-        quiz_data = await asyncio.to_thread(generate_quiz_struct, transcript)
+        # 3. Генерация квиза
+        await bot.edit_message_text("🧠 Придумываю вопросы и делаю тест/квиз ...", m.chat.id, msg.message_id)
         
-        if not quiz_data or not quiz_data.questions:
-            await message.answer("❌ Не удалось придумать вопросы по этому тексту.")
-            return
-
-        # 4. Списание и Ответ
-        deduct_credit(user_email, 1) # [FIX] Используем правильное имя функции
-        
-        await bot.delete_message(chat_id=message.chat.id, message_id=status_msg.message_id)
-        
-        preview_text = transcript[:200] + "..." if len(transcript) > 200 else transcript
-        await message.answer(
-            f"✅ <b>Готово!</b>\n\n"
-            f"🗣 <i>\"{preview_text}\"</i>\n\n"
-            f"👇 <b>А теперь проверь себя!</b>",
-            parse_mode="HTML"
+        # Хардкодим параметры для бота (в Streamlit они в UI)
+        quiz = await asyncio.to_thread(
+            logic.generate_quiz_ai, 
+            text=text, 
+            count=5, 
+            difficulty="Medium", 
+            lang="Russian"
         )
         
-        # 5. Опросы
-        for q in quiz_data.questions:
-            try:
-                await bot.send_poll(
-                    chat_id=message.chat.id,
-                    question=q.scenario[:299],
-                    options=[opt[:99] for opt in q.options],
-                    type='quiz',
-                    correct_option_id=q.correct_option_id,
-                    explanation=q.explanation[:199],
-                    is_anonymous=False
-                )
-                await asyncio.sleep(0.5) 
-            except Exception as e:
-                logging.error(f"Poll Error: {e}")
+        # 4. Списание средств и финал
+        auth.deduct_credit(user_email, 1)
+        await bot.delete_message(m.chat.id, msg.message_id)
+        await m.answer("✅ Готово! Вот ваш тест/квиз:")
 
+        # Отправка нативных опросов Telegram
+        for q in quiz.questions:
+            try:
+                # Telegram имеет лимиты: вопрос < 300 символов, опция < 100
+                await bot.send_poll(
+                    chat_id=m.chat.id,
+                    question=q.scenario[:299], 
+                    options=[o[:99] for o in q.options], 
+                    type='quiz', 
+                    correct_option_id=q.correct_option_id,
+                    explanation=q.explanation[:199] # Можно добавить объяснение (до 200 символов)
+                )
+                await asyncio.sleep(1) # Небольшая пауза, чтобы не спамить
+            except Exception as e:
+                logging.error(f"Ошибка отправки опроса: {e}")
+                
     except Exception as e:
-        logging.error(f"Global Error: {e}")
-        await message.answer("❌ Произошла ошибка.")
-    
+        await m.answer(f"❌ Произошла ошибка: {e}")
+        logging.error(e)
     finally:
-        if os.path.exists(file_path): 
-            try: os.remove(file_path)
-            except: pass
+        # Удаляем временный файл
+        if os.path.exists(path): 
+            os.remove(path)
 
 async def main():
     logging.basicConfig(level=logging.INFO)
     dp = Dispatcher()
     dp.include_router(router)
-    await set_main_menu(bot)
+    
+    # Удаляем вебхук, чтобы polling заработал сразу
     await bot.delete_webhook(drop_pending_updates=True)
+    print("🤖 Бот VYUD AI запущен!")
     await dp.start_polling(bot)
 
-if __name__ == "__main__":
+if __name__ == "__main__": 
     asyncio.run(main())
