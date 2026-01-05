@@ -1,4 +1,30 @@
 import streamlit as st
+
+# --- Вставь это в начало файла, после import streamlit as st ---
+def render_wallet_section():
+    st.markdown("---")
+    st.subheader("💳 Баланс кредитов")
+    
+    # Пока берем из session_state, позже подключим реальную БД
+    current_credits = st.session_state.get('user_credits', 0) 
+    
+    col1, col2 = st.columns([1, 1])
+    with col1:
+        st.metric(label="Доступно", value=current_credits)
+    with col2:
+        st.write("") 
+        st.link_button(
+            label="Пополнить ⚡️", 
+            url="https://vyud.online/#pricing", 
+            type="primary"
+        )
+    st.caption("1 кредит = 1 генерация")
+
+# --- Вставь вызов функции ниже в коде, где отрисовывается интерфейс ---
+# if st.session_state.get('authenticated'):
+#     with st.sidebar:   <-- Рекомендую в сайдбар
+#         render_wallet_section()
+
 import time
 import os
 
