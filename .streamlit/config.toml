@@ -1,0 +1,10 @@
+[theme]
+primaryColor = "#00D4FF"        # Vyud Neon: Основной акцент (кнопки, слайдеры)
+backgroundColor = "#0E1117"     # Void Black: Глубокий фон
+secondaryBackgroundColor = "#262730" # Dark Matter: Фон сайдбара и карточек
+textColor = "#FAFAFA"           # Starlight: Основной текст
+font = "sans serif"             # Базовый шрифт (будем переопределять через CSS)
+
+[server]
+enableCORS = false
+enableXsrfProtection = false

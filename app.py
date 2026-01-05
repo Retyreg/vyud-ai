@@ -22,6 +22,15 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+import streamlit as st
+from utils.ui import set_page_styling
+
+st.set_page_config(page_title="VYUD AI", page_icon="assets/logo_icon.svg", layout="wide")
+set_page_styling() # Вызываем сразу после конфига
+
+st.title("VYUD AI Dashboard")
+st.button("Start Generation")
+
 # --- ИНИЦИАЛИЗАЦИЯ СЕССИИ ---
 if "user" not in st.session_state:
     st.session_state.user = None
@@ -152,7 +161,7 @@ with tab1:
             
             with c2:
                 # Скачать PDF Сертификат
-                student_name = st.text_input("Имя студента для сертификата", "Иван Иванов")
+                student_name = st.text_input("Имя студента для сертификата", "John Snow")
                 if st.button("📄 Сгенерировать PDF Сертификат"):
                     pdf_buffer = logic.create_certificate(student_name, "Корпоративное обучение")
                     st.download_button(

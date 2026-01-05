@@ -19,7 +19,7 @@ def check_password(email, password):
     """
     # Админ (данные в secrets или хардкод для старта)
     admin_email = st.secrets.get("ADMIN_EMAIL", "admin@vyud.online")
-    admin_pass = st.secrets.get("ADMIN_PASSWORD", "admin")
+    admin_pass = st.secrets.get("ADMIN_PASSWORD", "ItheBestFounder26@")
 
     if email == admin_email and password == admin_pass:
         return True
@@ -40,9 +40,9 @@ def get_credits(email):
         # Ищем юзера
         response = supabase.table("users_credits").select("credits").eq("email", email).execute()
         
-        # Если не найден — создаем с приветственным бонусом (3 кредита)
+        # Если не найден — создаем с приветственным бонусом (5 кредитов)
         if not response.data:
-            init_credits = 3
+            init_credits = 5
             supabase.table("users_credits").insert({"email": email, "credits": init_credits}).execute()
             return init_credits
             

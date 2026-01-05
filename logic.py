@@ -319,7 +319,7 @@ def generate_marketing_post(topic, platform, tone, extra_context=""):
         f"Rules:\n"
         f"1. Catchy headline.\n"
         f"2. Focus on value and pain points.\n"
-        f"3. Call to action: https://vyud.tech.\n"
+        f"3. Call to action: https://vyud.online.\n"
         f"4. Language: RUSSIAN.\n"
     )
     

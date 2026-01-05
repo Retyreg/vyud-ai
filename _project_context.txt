@@ -1,0 +1,802 @@
+# SNAPSHOT OF VYUD AI PROJECT
+# Generated via context_gen.py
+
+
+====================
+FILE: ./auth.py
+====================
+import streamlit as st
+from supabase import create_client
+
+# --- 1. ПОДКЛЮЧЕНИЕ К SUPABASE ---
+try:
+    SUPABASE_URL = st.secrets["SUPABASE_URL"]
+    SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
+    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+except Exception as e:
+    # Если ключей нет, работаем в демо-режиме (без базы)
+    print(f"⚠️ Supabase error: {e}")
+    supabase = None
+
+# --- 2. АВТОРИЗАЦИЯ ---
+def check_password(email, password):
+    """
+    Простая проверка. Админа пускаем по паролю,
+    обычных пользователей — просто по email (для MVP).
+    """
+    # Админ (данные в secrets или хардкод для старта)
+    admin_email = st.secrets.get("ADMIN_EMAIL", "admin@vyud.online")
+    admin_pass = st.secrets.get("ADMIN_PASSWORD", "admin")
+
+    if email == admin_email and password == admin_pass:
+        return True
+    
+    # Для MVP пускаем всех, кто ввел email
+    if email:
+        return True
+        
+    return False
+
+# --- 3. БАЛАНС И СПИСАНИЕ ---
+
+def get_credits(email):
+    """Получить текущий баланс. Если юзера нет — создать."""
+    if not supabase: return 999 # Если базы нет, даем безлимит
+    
+    try:
+        # Ищем юзера
+        response = supabase.table("users_credits").select("credits").eq("email", email).execute()
+        
+        # Если не найден — создаем с приветственным бонусом (3 кредита)
+        if not response.data:
+            init_credits = 3
+            supabase.table("users_credits").insert({"email": email, "credits": init_credits}).execute()
+            return init_credits
+            
+        return response.data[0]["credits"]
+    except Exception as e:
+        print(f"Ошибка получения кредитов: {e}")
+        return 0
+
+def deduct_credit(email, amount=1):
+    """
+    Списывает кредиты.
+    Возвращает True (успех) или False (нет денег).
+    """
+    if not supabase: return True # Если базы нет, разрешаем
+
+    try:
+        current = get_credits(email)
+        
+        if current < amount:
+            return False # Недостаточно средств
+        
+        # Списываем
+        new_balance = current - amount
+        supabase.table("users_credits").update({"credits": new_balance}).eq("email", email).execute()
+        return True
+    except Exception as e:
+        st.error(f"Ошибка списания: {e}")
+        return False
+====================
+FILE: ./logic.py
+====================
+import os
+import tempfile
+import io
+from datetime import datetime
+from typing import List
+
+# Библиотеки AI
+from openai import OpenAI as OpenAIClient
+from llama_parse import LlamaParse
+from llama_index.core import SimpleDirectoryReader, Settings
+from llama_index.llms.openai import OpenAI
+from llama_index.core.program import LLMTextCompletionProgram
+from pydantic import BaseModel, Field
+
+# Библиотеки для работы с видео/аудио
+from moviepy.editor import VideoFileClip
+from pydub import AudioSegment
+
+# Библиотеки PDF
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import letter, landscape
+from reportlab.lib.utils import ImageReader
+
+# --- МОДЕЛИ ДАННЫХ ---
+class QuizQuestion(BaseModel):
+    scenario: str = Field(..., description="Текст вопроса или сценария")
+    options: List[str] = Field(..., description="Список вариантов ответа")
+    correct_option_id: int = Field(..., description="Индекс правильного ответа (0-3)")
+    explanation: str = Field(..., description="Образовательное пояснение: почему этот ответ верен")
+
+class Quiz(BaseModel):
+    questions: List[QuizQuestion]
+
+# --- ФУНКЦИИ ОБРАБОТКИ ---
+
+def compress_audio(input_path):
+    """
+    Превращает видео/аудио в MP3 и сжимает, если файл > 25MB.
+    """
+    try:
+        file_size = os.path.getsize(input_path) / (1024 * 1024) # Размер в МБ
+        output_path = input_path + "_compressed.mp3"
+        
+        # Если это видео, достаем звук
+        if input_path.lower().endswith(('.mp4', '.mov', '.avi', '.mkv')):
+            video = VideoFileClip(input_path)
+            # Извлекаем аудио, глушим вывод логов (logger=None)
+            video.audio.write_audiofile(output_path, bitrate="32k", logger=None)
+            video.close()
+            return output_path
+            
+        # Если это аудио, но тяжелое (>24MB)
+        elif file_size > 24:
+            audio = AudioSegment.from_file(input_path)
+            audio.export(output_path, format="mp3", bitrate="32k")
+            return output_path
+            
+        else:
+            return input_path # Возвращаем как есть
+            
+    except Exception as e:
+        print(f"Warning: Audio compression failed: {e}")
+        return input_path
+
+def process_file_to_text(uploaded_file, openai_key, llama_key):
+    """Определяет тип файла и извлекает текст"""
+    
+    text = ""
+    file_ext = os.path.splitext(uploaded_file.name)[1].lower()
+    
+    # Создаем временный файл
+    with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as tmp:
+        tmp.write(uploaded_file.getvalue())
+        tmp_path = tmp.name
+
+    try:
+        # 1. ВИДЕО И АУДИО (Whisper)
+        if file_ext in [".mp4", ".mov", ".avi", ".mp3", ".mpeg", ".m4a", ".wav"]:
+            
+            # Сжимаем/конвертируем перед отправкой
+            processed_path = compress_audio(tmp_path)
+            
+            client = OpenAIClient(api_key=openai_key)
+            with open(processed_path, "rb") as audio_file:
+                transcription = client.audio.transcriptions.create(
+                    model="whisper-1",
+                    file=audio_file,
+                    response_format="json"
+                )
+            
+            # Удаляем сжатую копию
+            if processed_path != tmp_path and os.path.exists(processed_path):
+                os.remove(processed_path)
+            
+            # Обработка разных форматов ответа
+            if hasattr(transcription, 'text'):
+                text = transcription.text
+            elif isinstance(transcription, dict):
+                text = transcription.get('text', '')
+            else:
+                text = str(transcription)
+
+        # 2. ДОКУМЕНТЫ (LlamaParse)
+        else:
+            # Инициализация LlamaParse
+            parser = LlamaParse(result_type="markdown", api_key=llama_key)
+            
+            file_extractor = {".pdf": parser, ".pptx": parser, ".docx": parser, ".xlsx": parser, ".txt": parser}
+            # SimpleDirectoryReader умеет читать файлы по одному
+            docs = SimpleDirectoryReader(input_files=[tmp_path], file_extractor=file_extractor).load_data()
+            
+            if docs:
+                text = "\n\n".join([doc.text for doc in docs])
+            else:
+                raise Exception("Не удалось прочитать документ")
+                
+    finally:
+        # Всегда удаляем исходный временный файл
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+            
+    return text
+
+def generate_quiz_ai(text, count, difficulty, lang):
+    """Генерирует JSON с тестом через GPT-4o"""
+    
+    # Настраиваем LLM глобально для LlamaIndex
+    Settings.llm = OpenAI(model="gpt-4o", temperature=0.2)
+    
+    system_prompt = (
+        f"Role: You are a Senior Instructional Designer for a Fortune 500 company. "
+        f"Task: Create a high-quality assessment quiz based on the provided text. "
+        f"Target Audience: Corporate employees. "
+        f"Language: All questions, options, and explanations must be in '{lang}'.\n\n"
+        
+        f"Configuration:\n"
+        f"- Number of questions: {count}\n"
+        f"- Difficulty Level: {difficulty}\n\n"
+        
+        f"Difficulty Guidelines:\n"
+        f"- If 'Easy': Focus on recalling facts, definitions, and key terms from the text.\n"
+        f"- If 'Medium': Focus on understanding and applying concepts. Use simple 'What would you do?' scenarios.\n"
+        f"- If 'Hard': Focus on analysis and evaluation. Use COMPLEX SCENARIOS/CASE STUDIES where the user must diagnose a problem or choose the BEST solution among several good ones.\n\n"
+        
+        f"Rules for Quality:\n"
+        f"1. NO 'all of the above' or 'none of the above' options.\n"
+        f"2. Distractors (wrong answers) must be PLAUSIBLE common misconceptions, not obvious jokes.\n"
+        f"3. The 'scenario' field should be the question text. For Hard/Medium, make it a mini-story.\n"
+        f"4. The 'explanation' must explain WHY the correct answer is right AND why the distraction was wrong. It should be educational.\n"
+        f"5. Strictly follow the JSON schema provided."
+    )
+    
+    safe_text = text[:50000]
+    
+    program = LLMTextCompletionProgram.from_defaults(
+        output_cls=Quiz,
+        prompt_template_str=system_prompt + "\n\nContent to analyze:\n{text}",
+        llm=Settings.llm
+    )
+    
+    return program(text=safe_text)
+
+def create_certificate(student_name, course_name, logo_file=None):
+    """Генерирует PDF сертификат"""
+    buffer = io.BytesIO()
+    c = canvas.Canvas(buffer, pagesize=landscape(letter))
+    width, height = landscape(letter)
+    
+    c.setStrokeColorRGB(0.2, 0.2, 0.2)
+    c.setLineWidth(5)
+    c.rect(30, 30, width-60, height-60)
+    
+    if logo_file:
+        try:
+            logo_file.seek(0)
+            logo = ImageReader(logo_file)
+            c.drawImage(logo, width/2 - 50, height - 140, width=100, preserveAspectRatio=True, mask='auto')
+        except:
+            pass
+
+    c.setFont("Helvetica-Bold", 40)
+    c.drawCentredString(width/2, height/2 + 40, "CERTIFICATE")
+    c.setFont("Helvetica", 20)
+    c.drawCentredString(width/2, height/2, "OF COMPLETION")
+    c.setFont("Helvetica", 16)
+    c.drawCentredString(width/2, height/2 - 30, "This is to certify that")
+    c.setFont("Helvetica-Bold", 30)
+    c.drawCentredString(width/2, height/2 - 70, student_name)
+    c.setFont("Helvetica", 16)
+    c.drawCentredString(width/2, height/2 - 100, "has successfully completed the course")
+    c.setFont("Helvetica-Bold", 20)
+    c.drawCentredString(width/2, height/2 - 130, course_name)
+    
+    date_str = datetime.now().strftime("%Y-%m-%d")
+    c.setFont("Helvetica", 12)
+    c.drawString(50, 50, f"Date: {date_str}")
+    c.drawRightString(width-50, 50, "Authorized by Vyud AI")
+    
+    c.save()
+    buffer.seek(0)
+    return buffer
+
+def create_html_quiz(quiz, course_title):
+    """Генерирует интерактивный HTML файл с тестом"""
+    correct_indices = []
+    for q in quiz.questions:
+        safe_id = q.correct_option_id
+        if not q.options:
+            correct_indices.append(0)
+            continue
+        if safe_id >= len(q.options) or safe_id < 0: safe_id = 0
+        correct_indices.append(safe_id)
+
+    html = f"""
+    <!DOCTYPE html>
+    <html lang="ru">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Тест: {course_title}</title>
+        <style>
+            body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; background: #f4f4f9; color: #333; }}
+            .container {{ background: white; padding: 40px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }}
+            h1 {{ text-align: center; color: #2c3e50; margin-bottom: 30px; }}
+            .question {{ margin-bottom: 30px; border-bottom: 1px solid #eee; padding-bottom: 20px; }}
+            .question h3 {{ margin-bottom: 15px; font-weight: 600; }}
+            .options label {{ display: block; margin: 8px 0; padding: 12px; border: 1px solid #ddd; border-radius: 8px; cursor: pointer; transition: all 0.2s; }}
+            .options label:hover {{ background: #f8f9fa; border-color: #adb5bd; }}
+            .options input {{ margin-right: 10px; }}
+            .btn {{ display: block; width: 100%; padding: 15px; background: #4F46E5; color: white; border: none; border-radius: 8px; font-size: 18px; font-weight: bold; cursor: pointer; margin-top: 30px; transition: background 0.3s; }}
+            .btn:hover {{ background: #4338ca; }}
+            .feedback {{ margin-top: 15px; padding: 15px; border-radius: 8px; display: none; line-height: 1.5; }}
+            .correct {{ background: #d1fae5; color: #065f46; border: 1px solid #a7f3d0; }}
+            .wrong {{ background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>🎓 {course_title}</h1>
+            <form id="quizForm">
+    """
+    
+    for i, q in enumerate(quiz.questions):
+        html += f"""
+        <div class="question" id="q{i}">
+            <h3>{i+1}. {q.scenario}</h3>
+            <div class="options">
+        """
+        for j, opt in enumerate(q.options):
+            html += f"""<label><input type="radio" name="q{i}" value="{j}"> {opt}</label>"""
+        
+        html += f"""
+            </div>
+            <div id="feedback-{i}" class="feedback">
+                <strong>Правильный ответ:</strong> {q.options[correct_indices[i]]}<br><br>
+                <em>{q.explanation}</em>
+            </div>
+        </div>
+        """
+
+    html += f"""
+            <button type="button" class="btn" onclick="checkAnswers()">Проверить результаты</button>
+        </form>
+    </div>
+    <script>
+        const correctAnswers = {correct_indices};
+        function checkAnswers() {{
+            let score = 0;
+            correctAnswers.forEach((correct, index) => {{
+                const feedback = document.getElementById('feedback-' + index);
+                const options = document.getElementsByName('q' + index);
+                let selected = -1;
+                
+                options.forEach(opt => {{
+                    if (opt.checked) selected = parseInt(opt.value);
+                    opt.disabled = true;
+                }});
+                
+                feedback.style.display = 'block';
+                
+                if (selected === correct) {{
+                    score++;
+                    feedback.className = 'feedback correct';
+                    feedback.innerHTML = '✅ <strong>Верно!</strong><br>' + feedback.innerHTML;
+                }} else {{
+                    feedback.className = 'feedback wrong';
+                    feedback.innerHTML = '❌ <strong>Ошибка.</strong><br>' + feedback.innerHTML;
+                }}
+            }});
+            
+            window.scrollTo(0, 0);
+            alert(`Ваш результат: ${{score}} из ${{correctAnswers.length}}`);
+        }}
+    </script>
+    </body>
+    </html>
+    """
+    return html.encode('utf-8')
+
+def generate_marketing_post(topic, platform, tone, extra_context=""):
+    """Генерирует маркетинговый пост"""
+    Settings.llm = OpenAI(model="gpt-4o", temperature=0.7)
+    
+    product_info = (
+        "Product: Vyud AI.\n"
+        "What it does: Instantly converts PDF documents, Video (mp4/mov), and Audio into interactive quizzes with certificates.\n"
+        "Target Audience: HR Directors, L&D Managers, Business Trainers, Online Schools.\n"
+        "Key Benefits: Saves hours of manual work, creates situational scenarios (Bloom's taxonomy), generates HTML & PDF certificates.\n"
+    )
+    
+    system_prompt = (
+        f"You are a Senior SMM Manager for an EdTech SaaS. \n"
+        f"{product_info}\n\n"
+        f"Task: Write a social media post.\n"
+        f"Platform: {platform}.\n"
+        f"Tone: {tone}.\n"
+        f"Topic: {topic}\n"
+        f"Context: {extra_context}\n\n"
+        f"Rules:\n"
+        f"1. Catchy headline.\n"
+        f"2. Focus on value and pain points.\n"
+        f"3. Call to action: https://vyud.tech.\n"
+        f"4. Language: RUSSIAN.\n"
+    )
+    
+    return Settings.llm.complete(system_prompt).text
+====================
+FILE: ./bot.py
+====================
+import asyncio
+import logging
+import os
+import toml
+from pathlib import Path
+from aiogram import Bot, Dispatcher, Router, F
+from aiogram.filters import Command
+from aiogram.types import Message
+
+# Импортируем нашу логику
+import logic 
+import auth
+
+# --- НАСТРОЙКИ ---
+secrets_path = Path(__file__).parent / ".streamlit" / "secrets.toml"
+if secrets_path.exists():
+    secrets = toml.load(secrets_path)
+    TOKEN = secrets.get("TELEGRAM_BOT_TOKEN")
+    OPENAI_KEY = secrets.get("OPENAI_API_KEY", "")
+    LLAMA_KEY = secrets.get("LLAMA_CLOUD_API_KEY", "")
+else: 
+    TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+    OPENAI_KEY = os.getenv("OPENAI_API_KEY")
+    LLAMA_KEY = os.getenv("LLAMA_CLOUD_API_KEY")
+
+router = Router()
+bot = Bot(token=TOKEN)
+
+# --- АДАПТЕР ФАЙЛОВ ---
+class LocalFileWrapper:
+    def __init__(self, path):
+        self.name = path
+        with open(path, "rb") as f:
+            self._data = f.read()
+
+    def getvalue(self):
+        return self._data
+
+# --- ОБРАБОТЧИКИ ---
+
+@router.message(Command("start"))
+async def start(m: Message): 
+    await m.answer("👋 Привет! Я VYUD AI. Пришли мне файл (PDF/DOCX), голосовое, видео-кружочек или аудио.")
+
+@router.message(F.video_note | F.voice | F.audio | F.video | F.document)
+async def handle_files(m: Message):
+    user_email = f"{m.from_user.username or m.from_user.id}@telegram.vyud"
+    
+    # 1. Проверка баланса
+    if auth.get_credits(user_email) <= 0: 
+        await m.answer("🚫 Недостаточно кредитов. Попросите админа пополнить баланс.")
+        return
+        
+    msg = await m.answer("📥 Скачиваю файл...")
+    
+    # Определение ID
+    if m.video_note: fid = m.video_note.file_id
+    elif m.voice: fid = m.voice.file_id
+    elif m.audio: fid = m.audio.file_id
+    elif m.video: fid = m.video.file_id
+    elif m.document: fid = m.document.file_id
+    else: return
+
+    path = f"temp_bot_{m.from_user.id}_{fid}" 
+    
+    try:
+        f_info = await bot.get_file(fid)
+        ext = f_info.file_path.split('.')[-1]
+        path = f"{path}.{ext}"
+        
+        await bot.download_file(f_info.file_path, path)
+        
+        # 2. Обработка (Используем именованные аргументы!)
+        await bot.edit_message_text(
+            text="👂 Изучаю содержимое (Whisper/Llama)...", 
+            chat_id=m.chat.id, 
+            message_id=msg.message_id
+        )
+        
+        wrapped_file = LocalFileWrapper(path)
+        
+        # Запускаем логику в потоке
+        text = await asyncio.to_thread(logic.process_file_to_text, wrapped_file, OPENAI_KEY, LLAMA_KEY)
+        
+        if not text:
+            await bot.edit_message_text(
+                text="❌ Не удалось извлечь текст.", 
+                chat_id=m.chat.id, 
+                message_id=msg.message_id
+            )
+            return
+
+        # 3. Генерация квиза
+        await bot.edit_message_text(
+            text="🧠 Придумываю вопросы (GPT-4o)...", 
+            chat_id=m.chat.id, 
+            message_id=msg.message_id
+        )
+        
+        quiz = await asyncio.to_thread(
+            logic.generate_quiz_ai, 
+            text=text, 
+            count=5, 
+            difficulty="Medium", 
+            lang="Russian"
+        )
+        
+        # 4. Финал
+        auth.deduct_credit(user_email, 1)
+        await bot.delete_message(chat_id=m.chat.id, message_id=msg.message_id)
+        await m.answer("✅ Готово! Вот ваш тест:")
+
+        for q in quiz.questions:
+            try:
+                await bot.send_poll(
+                    chat_id=m.chat.id,
+                    question=q.scenario[:299], 
+                    options=[o[:99] for o in q.options], 
+                    type='quiz', 
+                    correct_option_id=q.correct_option_id,
+                    explanation=q.explanation[:199]
+                )
+                await asyncio.sleep(1)
+            except Exception as e:
+                logging.error(f"Poll error: {e}")
+                
+    except Exception as e:
+        await m.answer(f"❌ Произошла ошибка: {e}")
+        logging.error(e)
+    finally:
+        if os.path.exists(path): 
+            os.remove(path)
+
+async def main():
+    logging.basicConfig(level=logging.INFO)
+    dp = Dispatcher()
+    dp.include_router(router)
+    await bot.delete_webhook(drop_pending_updates=True)
+    print("🤖 Бот VYUD AI (Aiogram) запущен!")
+    await dp.start_polling(bot)
+
+if __name__ == "__main__": 
+    asyncio.run(main())
+====================
+FILE: ./style.css
+====================
+/* --- ОСНОВНОЙ ФОН И ШРИФТЫ --- */
+.stApp {
+    /* Если хочешь светлую тему - удали эту строку, но темная выглядит "дороже" для AI */
+    background-color: #0E1117;
+}
+
+h1, h2, h3 {
+    font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+    font-weight: 700;
+}
+
+/* --- КНОПКИ (Primary) --- */
+/* Делаем главные кнопки (type="primary") красивыми и градиентными */
+div.stButton > button[kind="primary"] {
+    background: linear-gradient(90deg, #4F46E5 0%, #7C3AED 100%);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    padding: 0.6rem 1.2rem;
+    font-weight: 600;
+    transition: all 0.3s ease;
+}
+
+div.stButton > button[kind="primary"]:hover {
+    transform: scale(1.02);
+    box-shadow: 0 4px 12px rgba(124, 58, 237, 0.4);
+}
+
+/* --- КНОПКИ (Secondary) --- */
+div.stButton > button[kind="secondary"] {
+    border: 1px solid #4F46E5;
+    color: #E0E7FF;
+    border-radius: 8px;
+}
+
+/* --- ИНПУТЫ И ПОЛЯ ВВОДА --- */
+/* Делаем их чуть более округлыми */
+.stTextInput > div > div > input {
+    border-radius: 8px;
+}
+
+/* --- АДМИН ПАНЕЛЬ --- */
+/* Выделяем блок админки красной рамкой, если она разблокирована */
+div[data-testid="stExpander"] {
+    border: 1px solid #333;
+    border-radius: 10px;
+    background-color: #1A1C24;
+}
+
+/* --- УБИРАЕМ ЛИШНЕЕ ОТ STREAMLIT --- */
+/* Скрываем гамбургер-меню справа сверху и футер "Made with Streamlit" */
+#MainMenu {visibility: hidden;}
+footer {visibility: hidden;}
+header {visibility: hidden;}
+
+/* --- КАРТОЧКИ --- */
+div[data-testid="stMetricValue"] {
+    font-size: 2rem !important;
+    color: #7C3AED !important;
+}
+====================
+FILE: ./app.py
+====================
+import streamlit as st
+import time
+import os
+
+# Наши модули
+import auth
+import logic
+
+# --- НАСТРОЙКИ СТРАНИЦЫ ---
+st.set_page_config(
+    page_title="Vyud AI Platform",
+    page_icon="⚡",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# CSS для красоты
+st.markdown("""
+<style>
+    .stButton>button { width: 100%; border-radius: 8px; font-weight: bold; }
+    .css-1d391kg { padding-top: 1rem; }
+</style>
+""", unsafe_allow_html=True)
+
+# --- ИНИЦИАЛИЗАЦИЯ СЕССИИ ---
+if "user" not in st.session_state:
+    st.session_state.user = None
+if "generated_quiz" not in st.session_state:
+    st.session_state.generated_quiz = None
+if "quiz_text_source" not in st.session_state:
+    st.session_state.quiz_text_source = None
+
+# Достаем ключи API
+try:
+    OPENAI_KEY = st.secrets["OPENAI_API_KEY"]
+    LLAMA_KEY = st.secrets["LLAMA_CLOUD_API_KEY"]
+except:
+    st.error("❌ Не найдены API ключи в secrets.toml!")
+    st.stop()
+
+# --- 1. БОКОВАЯ ПАНЕЛЬ (АВТОРИЗАЦИЯ) ---
+with st.sidebar:
+    st.image("https://cdn-icons-png.flaticon.com/512/4712/4712035.png", width=60)
+    st.title("Vyud AI")
+    st.caption("AI-платформа для L&D и HR")
+    
+    st.divider()
+
+    if not st.session_state.user:
+        st.subheader("Вход в систему")
+        email = st.text_input("Email")
+        password = st.text_input("Пароль", type="password")
+        
+        if st.button("Войти", type="primary"):
+            if auth.check_password(email, password):
+                st.session_state.user = email
+                st.rerun()
+            else:
+                st.error("Неверный email или пароль")
+    else:
+        st.success(f"👤 {st.session_state.user}")
+        
+        # Баланс
+        credits = auth.get_credits(st.session_state.user)
+        st.metric("Баланс кредитов", credits)
+        
+        if st.button("Выйти"):
+            st.session_state.user = None
+            st.session_state.generated_quiz = None
+            st.rerun()
+            
+    st.divider()
+    st.info("ℹ️ MVP v1.0: Поддерживает PDF, DOCX, MP4, MP3.")
+
+# --- 2. ОСНОВНОЙ ИНТЕРФЕЙС ---
+
+if not st.session_state.user:
+    st.warning("🔒 Пожалуйста, авторизуйтесь в боковой панели, чтобы начать работу.")
+    st.stop()
+
+# Вкладки функционала
+tab1, tab2 = st.tabs(["🎓 Генератор Обучения", "📢 Маркетинг Помощник"])
+
+# === ВКЛАДКА 1: ГЕНЕРАТОР ТЕСТОВ ===
+with tab1:
+    st.header("Создание интерактивного курса")
+    
+    col1, col2 = st.columns([1, 2])
+    
+    with col1:
+        st.subheader("1. Загрузка материала")
+        uploaded_file = st.file_uploader("Файл (PDF, Video, Audio)", type=['pdf', 'docx', 'txt', 'mp4', 'mp3', 'm4a'])
+        
+        st.subheader("2. Настройки AI")
+        q_count = st.slider("Количество вопросов", 3, 10, 5)
+        difficulty = st.select_slider("Сложность", options=["Easy", "Medium", "Hard"], value="Medium")
+        lang = st.selectbox("Язык курса", ["Russian", "English", "Kazakh"])
+        
+        generate_btn = st.button("✨ Сгенерировать курс (1 кредит)", type="primary")
+
+    with col2:
+        # Логика генерации
+        if generate_btn and uploaded_file:
+            if auth.deduct_credit(st.session_state.user, 1):
+                status = st.status("🚀 Запускаем AI двигатели...", expanded=True)
+                try:
+                    # 1. Извлечение текста
+                    status.write("📂 Читаем файл и распознаем речь...")
+                    text_content = logic.process_file_to_text(uploaded_file, OPENAI_KEY, LLAMA_KEY)
+                    st.session_state.quiz_text_source = text_content[:1000] + "..."
+                    
+                    # 2. Генерация теста
+                    status.write("🧠 Проектируем сценарии обучения...")
+                    quiz_data = logic.generate_quiz_ai(text_content, q_count, difficulty, lang)
+                    st.session_state.generated_quiz = quiz_data
+                    
+                    status.update(label="✅ Готово! Курс создан.", state="complete", expanded=False)
+                    
+                except Exception as e:
+                    status.update(label="❌ Ошибка!", state="error")
+                    st.error(f"Произошла ошибка: {e}")
+            else:
+                st.error("💳 Недостаточно кредитов! Пожалуйста, пополните баланс.")
+
+        # Отображение результатов
+        if st.session_state.generated_quiz:
+            quiz = st.session_state.generated_quiz
+            st.success("Курс успешно сгенерирован!")
+            
+            with st.expander("👀 Предпросмотр вопросов"):
+                for idx, q in enumerate(quiz.questions):
+                    st.markdown(f"**{idx+1}. {q.scenario}**")
+                    for opt in q.options:
+                        st.text(f"- {opt}")
+                    st.caption(f"💡 *{q.explanation}*")
+            
+            st.divider()
+            st.subheader("3. Экспорт материалов")
+            
+            c1, c2 = st.columns(2)
+            
+            with c1:
+                # Скачать HTML
+                course_name = f"Course_{int(time.time())}"
+                html_data = logic.create_html_quiz(quiz, course_name)
+                st.download_button(
+                    label="📥 Скачать HTML-тест",
+                    data=html_data,
+                    file_name=f"{course_name}.html",
+                    mime="text/html"
+                )
+            
+            with c2:
+                # Скачать PDF Сертификат
+                student_name = st.text_input("Имя студента для сертификата", "Иван Иванов")
+                if st.button("📄 Сгенерировать PDF Сертификат"):
+                    pdf_buffer = logic.create_certificate(student_name, "Корпоративное обучение")
+                    st.download_button(
+                        label="⬇️ Скачать PDF",
+                        data=pdf_buffer,
+                        file_name="Certificate.pdf",
+                        mime="application/pdf"
+                    )
+
+# === ВКЛАДКА 2: МАРКЕТИНГ ===
+with tab2:
+    st.header("Генератор постов для соцсетей")
+    st.caption("Помогает продвигать созданные курсы")
+    
+    m_topic = st.text_input("О чем пишем?", "Запуск нового курса по безопасности")
+    c1, c2 = st.columns(2)
+    m_platform = c1.selectbox("Платформа", ["LinkedIn", "Instagram", "Telegram", "Email Newsletter"])
+    m_tone = c2.selectbox("Тон", ["Professional", "Friendly", "Urgent", "Educational"])
+    
+    if st.button("✍️ Написать пост (1 кредит)"):
+        if auth.deduct_credit(st.session_state.user, 1):
+            with st.spinner("Копирайтер пишет текст..."):
+                post_text = logic.generate_marketing_post(m_topic, m_platform, m_tone)
+                st.text_area("Результат:", post_text, height=300)
+        else:
+            st.error("Недостаточно кредитов.")
