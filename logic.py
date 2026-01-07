@@ -12,9 +12,27 @@ from llama_index.llms.openai import OpenAI
 from llama_index.core.program import LLMTextCompletionProgram
 from pydantic import BaseModel, Field
 
-# Библиотеки для работы с видео/аудио
-from moviepy.editor import VideoFileClip
-from pydub import AudioSegment
+# Библиотеки для работы с видео/аудио будут импортированы при использовании
+# Это позволяет API запуститься даже если эти библиотеки не полностью совместимы
+VideoFileClip = None
+AudioSegment = None
+
+def _lazy_import_video_audio():
+    """Ленивый импорт видео/аудио библиотек"""
+    global VideoFileClip, AudioSegment
+    if VideoFileClip is None:
+        try:
+            # Попытка импорта для moviepy 1.x
+            from moviepy.editor import VideoFileClip as VFC
+            VideoFileClip = VFC
+        except ImportError:
+            # Для moviepy 2.x используем новую структуру
+            from moviepy.video.io.VideoFileClip import VideoFileClip as VFC
+            VideoFileClip = VFC
+
+    if AudioSegment is None:
+        from pydub import AudioSegment as AS
+        AudioSegment = AS
 
 # Библиотеки PDF
 from reportlab.pdfgen import canvas
@@ -37,10 +55,12 @@ def compress_audio(input_path):
     """
     Превращает видео/аудио в MP3 и сжимает, если файл > 25MB.
     """
+    _lazy_import_video_audio()  # Загружаем библиотеки при необходимости
+
     try:
         file_size = os.path.getsize(input_path) / (1024 * 1024) # Размер в МБ
         output_path = input_path + "_compressed.mp3"
-        
+
         # Если это видео, достаем звук
         if input_path.lower().endswith(('.mp4', '.mov', '.avi', '.mkv')):
             video = VideoFileClip(input_path)

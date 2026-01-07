@@ -17,11 +17,11 @@ def check_password(email, password):
     Простая проверка. Админа пускаем по паролю,
     обычных пользователей — просто по email (для MVP).
     """
-    # Админ (данные в secrets или хардкод для старта)
-    admin_email = st.secrets.get("ADMIN_EMAIL", "admin@vyud.online")
-    admin_pass = st.secrets.get("ADMIN_PASSWORD", "ItheBestFounder26@")
+    # Админ (данные в secrets)
+    admin_email = st.secrets.get("ADMIN_EMAIL")
+    admin_pass = st.secrets.get("ADMIN_PASSWORD")
 
-    if email == admin_email and password == admin_pass:
+    if admin_email and admin_pass and email == admin_email and password == admin_pass:
         return True
     
     # Для MVP пускаем всех, кто ввел email

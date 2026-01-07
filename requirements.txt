@@ -9,3 +9,7 @@ llama-parse
 llama-index-llms-openai
 python-dotenv
 pyTelegramBotAPI
+aiogram
+fastapi
+uvicorn[standard]
+python-multipart
