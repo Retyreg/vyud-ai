@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Git
+.git/
+.gitignore
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.log
+temp_*
+*.tmp
+
+# Local secrets (will use Railway environment variables instead)
+.streamlit/secrets.toml
+
+# Project specific
+_project_context.txt
+API_EXAMPLES.md
+README.md

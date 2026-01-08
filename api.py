@@ -295,4 +295,6 @@ async def generate_quiz_from_text(
 # --- ЗАПУСК ---
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    # Используем PORT из environment для Railway/Heroku совместимости
+    port = int(os.getenv("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
