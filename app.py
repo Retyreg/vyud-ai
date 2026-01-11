@@ -24,8 +24,10 @@ st.markdown("""
 with st.sidebar:
     st.title("VYUD AI 🎓")
     st.markdown("### ⚙️ Настройки")
-    logo_file = st.file_uploader("Логотип", type=['png', 'jpg', 'jpeg'])
+    logo_file = st.file_uploader("Логотип компании", type=['png', 'jpg', 'jpeg'])
+    signature_file = st.file_uploader("Подпись руководителя", type=['png', 'jpg', 'jpeg'])
     if logo_file: st.image(logo_file, width=150)
+    if signature_file: st.image(signature_file, width=100)
     st.markdown("---")
 
 # 4. АВТОРИЗАЦИЯ
@@ -54,99 +56,11 @@ else:
         with col_b1: st.metric("Баланс", cr)
         with col_b2: st.write("")
         
-        if st.button("💎 Тарифы", type="primary", use_container_width=True):
-            st.session_state['show_pricing'] = True
+        st.link_button("💎 Тарифы", "https://vyud.online/#pricing", type="primary", use_container_width=True)
 
         if st.button("Выход", use_container_width=True): 
             st.session_state['user']=None; st.rerun()
 
-    # --- НОВАЯ ТАРИФНАЯ СЕТКА (SOLO / TEAM / SCALE) ---
-    if st.session_state.get('show_pricing'):
-        with st.container():
-            st.markdown("""<h2 style='text-align: center; color: #f14635;'>🚀 Выберите тариф</h2>""", unsafe_allow_html=True)
-            st.info("ℹ️ Оплата через Kaspi. Кредиты начисляются в течение 15 минут.")
-            
-            KASPI_PAY_URL = "https://pay.kaspi.kz/pay/ds1rbipj"
-            
-            cp1, cp2, cp3 = st.columns(3)
-            card_style = "border: 1px solid #e0e0e0; border-radius: 12px; padding: 20px; text-align: center; background: white; box-shadow: 0 4px 6px rgba(0,0,0,0.05); height: 100%;"
-            
-            # 1. SOLO (MVP)
-            with cp1:
-                st.markdown(f"""<div style="{card_style}">
-                    <h3 style="color:#333">👤 Solo</h3>
-                    <h1 style="color:#f14635; font-size: 28px;">4 990 ₸</h1>
-                    <p style="color:gray; font-size: 14px;">Репетиторы, Инфобиз</p>
-                    <hr style="margin: 15px 0;">
-                    <ul style="text-align:left; list-style:none; padding:0; font-size:14px; line-height: 1.6;">
-                        <li>⚡ <b>50 Генераций / мес</b></li>
-                        <li>✅ PDF, DOCX, Видео</li>
-                        <li>✅ Базовый экспорт</li>
-                    </ul>
-                </div>""", unsafe_allow_html=True)
-                if st.button("Выбрать Solo", key="btn_solo", use_container_width=True): st.session_state['selected_plan'] = "Solo (4990 ₸)"
-
-            # 2. TEAM (SMB) - ХИТ
-            with cp2:
-                st.markdown(f"""<div style="{card_style} border: 2px solid #f14635; transform: scale(1.03); background: #fffcfc;">
-                    <div style="background:#f14635; color:white; padding:4px; border-radius:6px; font-size:12px; font-weight:bold; margin-bottom:10px">🔥 ВЫБОР БИЗНЕСА</div>
-                    <h3 style="color:#333">🏢 Team</h3>
-                    <h1 style="color:#f14635; font-size: 28px;">19 990 ₸</h1>
-                    <p style="color:gray; font-size: 14px;">Малый бизнес, Салоны</p>
-                    <hr style="margin: 15px 0;">
-                    <ul style="text-align:left; list-style:none; padding:0; font-size:14px; line-height: 1.6;">
-                        <li>♾️ <b>Безлимит*</b></li>
-                        <li>👥 До 20 сотрудников</li>
-                        <li>🚀 Приоритет скорости</li>
-                    </ul>
-                </div>""", unsafe_allow_html=True)
-                if st.button("Выбрать Team", type="primary", key="btn_team", use_container_width=True): st.session_state['selected_plan'] = "Team (19990 ₸)"
-
-            # 3. SCALE (CORP)
-            with cp3:
-                st.markdown(f"""<div style="{card_style}">
-                    <h3 style="color:#333">🌐 Scale</h3>
-                    <h1 style="color:#333; font-size: 24px;">По запросу</h1>
-                    <p style="color:gray; font-size: 14px;">Корпорации</p>
-                    <hr style="margin: 15px 0;">
-                    <ul style="text-align:left; list-style:none; padding:0; font-size:14px; line-height: 1.6;">
-                        <li>🔧 <b>API Доступ</b></li>
-                        <li>🏷️ White Label (Свой бренд)</li>
-                        <li>🛡️ SLA Поддержка</li>
-                    </ul>
-                </div>""", unsafe_allow_html=True)
-                st.link_button("Написать в WhatsApp", "https://wa.me/77771234567", use_container_width=True)
-
-            # --- ЛОГИКА ОПЛАТЫ ---
-            if st.session_state.get('selected_plan'):
-                st.divider()
-                st.markdown(f"### ✅ Вы выбрали: {st.session_state['selected_plan']}")
-                
-                c_pay1, c_pay2 = st.columns([1, 2])
-                with c_pay1:
-                     st.markdown(f"""<div style="background:#f14635; color:white; padding:30px; border-radius:10px; text-align:center; font-size:40px">💳</div>""", unsafe_allow_html=True)
-                
-                with c_pay2:
-                    price_val = st.session_state['selected_plan'].split('(')[1].replace(')', '')
-                    st.markdown(f"""
-                    **Инструкция по оплате:**
-                    1. Нажмите кнопку **"Перейти к оплате (Kaspi Pay)"**
-                    2. Введите сумму вручную: **{price_val}**
-                    3. ⚠️ **ВАЖНО:** В комментарии укажите Email: **`{st.session_state['user']}`**
-                    """)
-                    
-                    st.link_button("💳 Перейти к оплате (Kaspi Pay)", KASPI_PAY_URL, type="primary")
-
-                    st.caption("Нажали кнопку оплаты? Подтвердите действие:")
-                    if st.button("✅ Я оплатил, жду начисления"): 
-                        st.success("Заявка принята! Администратор проверит поступление и начислит лимиты.")
-                        st.balloons()
-
-            if st.button("Закрыть", type="secondary"):
-                st.session_state['show_pricing'] = False
-                st.session_state['selected_plan'] = None
-                st.rerun()
-            st.divider()
 
     st.title("Генератор Обучения AI 🧠")
     
@@ -205,7 +119,7 @@ else:
                 course = st.text_input("Название курса", value=d_c)
             
             try:
-                pdf = logic.create_certificate(name, course, logo_file)
+                pdf = logic.create_certificate(name, course, logo_file, signature_file)
                 st.download_button("📥 Скачать Сертификат (PDF)", pdf, "cert.pdf", "application/pdf", type="primary")
             except Exception as e: st.error(f"Ошибка PDF: {e}")
             
