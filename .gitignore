@@ -1,6 +1,13 @@
-.env
-venv/
-.env
-venv/
 .streamlit/secrets.toml
+*.pyc
+__pycache__/
+*.db
 *.log
+nohup.out
+venv/
+.env
+*.tar.gz
+*.mp3
+*.mp4
+*.wav
+temp_*

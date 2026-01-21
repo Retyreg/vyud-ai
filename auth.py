@@ -110,6 +110,43 @@ def add_credits(email, amount):
     except:
         return False
 
+
+def get_user_role(email):
+    """Получить роль пользователя: admin, moderator, user"""
+    try:
+        supabase = get_supabase()
+        if supabase:
+            result = supabase.table("users_credits").select("role").eq("email", email).execute()
+            if result.data and len(result.data) > 0:
+                return result.data[0].get("role", "user") or "user"
+    except:
+        pass
+    return "user"
+
+
+def set_user_role(email, role):
+    """Установить роль пользователя (только для админов)"""
+    try:
+        supabase = get_supabase()
+        if supabase:
+            supabase.table("users_credits").update({"role": role}).eq("email", email).execute()
+            return True
+    except:
+        pass
+    return False
+
+
+def get_all_users():
+    """Получить всех пользователей (для админки)"""
+    try:
+        supabase = get_supabase()
+        if supabase:
+            result = supabase.table("users_credits").select("email, credits, role").execute()
+            return result.data if result.data else []
+    except:
+        pass
+    return []
+
 class MockSupabaseClient:
     def table(self, name): return self
     def select(self, *args): return self

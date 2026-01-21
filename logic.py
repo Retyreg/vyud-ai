@@ -4,6 +4,9 @@ import json
 import os
 import PyPDF2
 from docx import Document
+from pptx import Presentation
+import openpyxl
+import csv
 import moviepy.editor as mp
 from tempfile import NamedTemporaryFile
 import io
@@ -40,7 +43,8 @@ def process_file_to_text(uploaded_file, api_key):
         # PDF
         if file_ext == 'pdf':
             pdf_reader = PyPDF2.PdfReader(uploaded_file)
-            for page in pdf_reader.pages: text_content += page.extract_text() + "\n"
+            for page in pdf_reader.pages:
+                text_content += page.extract_text() + "\n"
         
         # DOCX
         elif file_ext in ['docx', 'doc']:
@@ -51,19 +55,62 @@ def process_file_to_text(uploaded_file, api_key):
         elif file_ext == 'txt':
             text_content = uploaded_file.getvalue().decode("utf-8")
         
-        # ВИДЕО И АУДИО (ГЛАВНАЯ ЧАСТЬ)
-        elif file_ext in ['mp4', 'mov', 'avi', 'mkv', 'mp3', 'wav', 'm4a', 'mpeg4', 'webm', 'wmv']:
+        # PPTX (PowerPoint)
+        elif file_ext == 'pptx':
+            prs = Presentation(uploaded_file)
+            for slide_num, slide in enumerate(prs.slides, 1):
+                text_content += f"\n--- Слайд {slide_num} ---\n"
+                for shape in slide.shapes:
+                    if hasattr(shape, "text") and shape.text.strip():
+                        text_content += shape.text + "\n"
+                    # Извлекаем текст из таблиц
+                    if shape.has_table:
+                        for row in shape.table.rows:
+                            row_text = [cell.text for cell in row.cells]
+                            text_content += " | ".join(row_text) + "\n"
+        
+        # XLSX (Excel)
+        elif file_ext in ['xlsx', 'xls']:
+            wb = openpyxl.load_workbook(uploaded_file, data_only=True)
+            for sheet_name in wb.sheetnames:
+                sheet = wb[sheet_name]
+                text_content += f"\n--- Лист: {sheet_name} ---\n"
+                for row in sheet.iter_rows(values_only=True):
+                    row_text = [str(cell) if cell is not None else "" for cell in row]
+                    if any(row_text):
+                        text_content += " | ".join(row_text) + "\n"
+        
+        # CSV
+        elif file_ext == 'csv':
+            content = uploaded_file.getvalue().decode("utf-8")
+            reader = csv.reader(content.splitlines())
+            for row in reader:
+                text_content += " | ".join(row) + "\n"
+        
+        # TSV
+        elif file_ext == 'tsv':
+            content = uploaded_file.getvalue().decode("utf-8")
+            reader = csv.reader(content.splitlines(), delimiter='\t')
+            for row in reader:
+                text_content += " | ".join(row) + "\n"
+        
+        # ВИДЕО И АУДИО
+        elif file_ext in ['mp4', 'mov', 'avi', 'mkv', 'mp3', 'wav', 'm4a', 'mpeg4', 'webm', 'wmv', 'flv', 'ogg', 'aac', 'wma', '3gp', 'mpeg', 'mpg']:
             with st.status("🎬 Обработка видео/аудио...", expanded=True) as status:
                 status.write("1. Извлекаем аудиодорожку...")
                 text_content = transcribe_audio_video(uploaded_file, client, status)
                 status.update(label="✅ Готово!", state="complete", expanded=False)
+        
+        else:
+            st.warning(f"⚠️ Формат .{file_ext} пока не поддерживается")
+            return ""
 
     except Exception as e:
         st.error(f"❌ Ошибка обработки файла: {e}")
         return ""
 
-    if not text_content:
-        st.warning("⚠️ Текст не извлечен. Возможно, файл пустой или видео без звука.")
+    if not text_content or not text_content.strip():
+        st.warning("⚠️ Нет текста. Возможно, файл пустой или содержит только изображения.")
     
     return text_content
 
