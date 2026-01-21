@@ -368,23 +368,30 @@ else:
         else:
             for test in tests:
                 with st.expander(f"📝 {test['title']} ({test['questions_count']} вопросов)", expanded=False):
-                    col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
+                    # Первый ряд кнопок
+                    col1, col2, col3, col4, col5 = st.columns([2, 1, 1, 1, 1])
                     with col1:
                         st.caption(f"📅 Создан: {test['created_at'][:10]}")
                         st.caption(f"📁 Файл: {test.get('source_filename', 'N/A')}")
                         st.caption(f"🎯 Сложность: {test.get('difficulty', 'N/A')} | 🌐 Язык: {test.get('language', 'N/A')}")
                     
                     with col2:
+                        if st.button("▶️ Пройти", key=f"take_{test['id']}", type="primary"):
+                            st.session_state['taking_test_id'] = test['id']
+                            st.session_state['taking_test_start'] = datetime.now()
+                            st.rerun()
+                    
+                    with col3:
                         if st.button("🔗 Поделиться", key=f"share_{test['id']}"):
                             st.session_state['sharing_test_id'] = test['id']
                             st.rerun()
                     
-                    with col3:
+                    with col4:
                         if st.button("✏️ Редактировать", key=f"edit_{test['id']}"):
                             st.session_state['editing_test_id'] = test['id']
                             st.rerun()
                     
-                    with col4:
+                    with col5:
                         if st.button("🗑️ Удалить", key=f"del_{test['id']}"):
                             if db.delete_test(test['id']):
                                 st.success("Тест удалён")
@@ -404,6 +411,152 @@ else:
                             st.metric("Не сдали", stats['failed_count'])
                         with mcol4:
                             st.metric("Средний %", f"{stats['avg_percentage']}%")
+                        
+                        # Кнопка истории
+                        if st.button("📜 История попыток", key=f"history_{test['id']}"):
+                            st.session_state['history_test_id'] = test['id']
+                            st.session_state['history_test_title'] = test['title']
+                            st.rerun()
+        
+        # РЕЖИМ ПРОХОЖДЕНИЯ ТЕСТА
+        if st.session_state.get('taking_test_id'):
+            st.divider()
+            test_data = db.get_test(st.session_state['taking_test_id'])
+            
+            if test_data:
+                st.subheader(f"▶️ Прохождение: {test_data['title']}")
+                
+                questions = test_data['questions']
+                
+                if not st.session_state.get('taking_done'):
+                    with st.form("take_test_form"):
+                        ans = {}
+                        for i, q in enumerate(questions):
+                            st.markdown(f"**{i+1}. {q['scenario']}**")
+                            ans[i] = st.radio("Ответ:", q['options'], key=f"take_q_{i}")
+                            st.divider()
+                        
+                        col_submit, col_cancel = st.columns(2)
+                        with col_submit:
+                            submitted = st.form_submit_button("✅ Завершить тест", type="primary")
+                        with col_cancel:
+                            cancelled = st.form_submit_button("❌ Отмена")
+                        
+                        if submitted:
+                            score = 0
+                            answers_data = []
+                            for i, q in enumerate(questions):
+                                selected_idx = q['options'].index(ans.get(i)) if ans.get(i) in q['options'] else -1
+                                is_correct = selected_idx == q['correct_option_id']
+                                if is_correct:
+                                    score += 1
+                                answers_data.append({
+                                    "question_id": i,
+                                    "selected": selected_idx,
+                                    "correct": is_correct
+                                })
+                            
+                            total = len(questions)
+                            passed = score >= total * 0.7
+                            
+                            # Время
+                            time_spent = None
+                            if st.session_state.get('taking_test_start'):
+                                time_spent = int((datetime.now() - st.session_state['taking_test_start']).total_seconds())
+                            
+                            # Сохраняем результат
+                            db.save_attempt(
+                                test_id=st.session_state['taking_test_id'],
+                                user_email=st.session_state['user'],
+                                score=score,
+                                total_questions=total,
+                                passed=passed,
+                                answers=answers_data,
+                                time_spent_seconds=time_spent
+                            )
+                            
+                            st.session_state['taking_score'] = score
+                            st.session_state['taking_total'] = total
+                            st.session_state['taking_passed'] = passed
+                            st.session_state['taking_done'] = True
+                            st.rerun()
+                        
+                        if cancelled:
+                            del st.session_state['taking_test_id']
+                            if 'taking_done' in st.session_state:
+                                del st.session_state['taking_done']
+                            st.rerun()
+                else:
+                    # Результаты
+                    score = st.session_state['taking_score']
+                    total = st.session_state['taking_total']
+                    passed = st.session_state['taking_passed']
+                    
+                    if passed:
+                        st.success(f"🎉 Поздравляем! Тест сдан: {score}/{total}")
+                        st.balloons()
+                    else:
+                        st.error(f"😔 Тест не сдан: {score}/{total}. Нужно минимум {int(total * 0.7)} правильных.")
+                    
+                    # Показываем правильные ответы
+                    with st.expander("📖 Посмотреть правильные ответы"):
+                        for i, q in enumerate(questions):
+                            correct_ans = q['options'][q['correct_option_id']]
+                            st.markdown(f"**{i+1}. {q['scenario']}**")
+                            st.markdown(f"✅ Правильный ответ: **{correct_ans}**")
+                            if q.get('explanation'):
+                                st.caption(f"💡 {q['explanation']}")
+                            st.divider()
+                    
+                    col_r1, col_r2 = st.columns(2)
+                    with col_r1:
+                        if st.button("🔄 Пройти ещё раз", key="btn_retake"):
+                            st.session_state['taking_done'] = False
+                            st.session_state['taking_test_start'] = datetime.now()
+                            st.rerun()
+                    with col_r2:
+                        if st.button("📚 Вернуться к тестам", key="btn_back_tests"):
+                            del st.session_state['taking_test_id']
+                            del st.session_state['taking_done']
+                            st.rerun()
+        
+        # РЕЖИМ ИСТОРИИ ПОПЫТОК
+        if st.session_state.get('history_test_id'):
+            st.divider()
+            st.subheader(f"📜 История попыток: {st.session_state.get('history_test_title', 'Тест')}")
+            
+            attempts = db.get_test_attempts_history(st.session_state['history_test_id'], st.session_state['user'])
+            
+            if not attempts:
+                st.info("Вы ещё не проходили этот тест")
+            else:
+                # График прогресса
+                if len(attempts) > 1:
+                    st.markdown("**📈 График прогресса:**")
+                    import pandas as pd
+                    chart_data = pd.DataFrame({
+                        'Попытка': list(range(1, len(attempts) + 1)),
+                        'Результат (%)': [a['percentage'] for a in reversed(attempts)]
+                    })
+                    st.line_chart(chart_data.set_index('Попытка'))
+                
+                # Таблица попыток
+                st.markdown("**📋 Все попытки:**")
+                for i, a in enumerate(attempts):
+                    status = "✅ Сдано" if a['passed'] else "❌ Не сдано"
+                    time_str = f"{a['time_spent']}с" if a.get('time_spent') else "N/A"
+                    date_str = a['date'][:16].replace('T', ' ') if a.get('date') else "N/A"
+                    
+                    st.markdown(f"""
+                    **Попытка {len(attempts) - i}** | {status} | {a['score']}/{a['total']} ({a['percentage']}%) | ⏱️ {time_str} | 📅 {date_str}
+                    """)
+                    st.progress(a['percentage'] / 100)
+            
+            if st.button("◀️ Назад", key="btn_back_history"):
+                del st.session_state['history_test_id']
+                if 'history_test_title' in st.session_state:
+                    del st.session_state['history_test_title']
+                st.rerun()
         
         # РЕЖИМ ШАРИНГА
         if st.session_state.get('sharing_test_id'):

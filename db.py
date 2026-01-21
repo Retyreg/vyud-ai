@@ -561,6 +561,41 @@ def get_test_sharing_info(test_id: str) -> dict:
         return None
 
 
+def get_test_attempts_history(test_id: str, user_email: str) -> list:
+    """
+    Получить историю попыток конкретного пользователя по конкретному тесту
+    
+    Returns:
+        [{"score": 5, "total": 10, "percentage": 50.0, "passed": False, "time_spent": 120, "date": "..."}, ...]
+    """
+    supabase = get_supabase()
+    if not supabase:
+        return []
+    
+    try:
+        result = supabase.table("test_attempts")\
+            .select("score, total_questions, percentage, passed, time_spent_seconds, passed_at")\
+            .eq("test_id", test_id)\
+            .eq("user_email", user_email)\
+            .order("passed_at", desc=True)\
+            .execute()
+        
+        attempts = []
+        for a in result.data:
+            attempts.append({
+                "score": a["score"],
+                "total": a["total_questions"],
+                "percentage": float(a["percentage"]) if a.get("percentage") else 0,
+                "passed": a["passed"],
+                "time_spent": a.get("time_spent_seconds"),
+                "date": a.get("passed_at")
+            })
+        return attempts
+    except Exception as e:
+        st.error(f"Ошибка загрузки истории: {e}")
+        return []
+
+
 def get_question_stats(test_id: str) -> list:
     """
     Получить статистику по каждому вопросу теста (на каких чаще ошибаются)
