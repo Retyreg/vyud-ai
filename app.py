@@ -150,8 +150,44 @@ if public_slug:
 
 # 3. САЙДБАР
 with st.sidebar:
-    st.title("VYUD AI 🎓")
-    st.markdown("### ⚙️ Настройки")
+    # Логотип VYUD
+    try:
+        st.image("assets/logo.png", width=180)
+    except:
+        st.title("VYUD AI 🎓")
+    
+    st.markdown("---")
+    
+    # Блок Telegram
+    st.markdown("""
+    <div style="background: linear-gradient(135deg, #0088cc 0%, #00a2e8 100%); padding: 15px; border-radius: 12px; margin-bottom: 15px;">
+        <div style="display: flex; align-items: center; margin-bottom: 10px;">
+            <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="white" style="margin-right: 10px;">
+                <path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/>
+            </svg>
+            <span style="color: white; font-weight: bold; font-size: 16px;">Telegram Бот</span>
+        </div>
+        <p style="color: rgba(255,255,255,0.95); font-size: 13px; margin: 0 0 12px 0; line-height: 1.4;">
+            🚀 В командировке или в дороге? Создавай тесты и проверяй знания сотрудников прямо в Telegram!
+        </p>
+        <a href="https://t.me/VyudAiBot" target="_blank" style="
+            display: block;
+            background: white;
+            color: #0088cc;
+            text-align: center;
+            padding: 10px;
+            border-radius: 8px;
+            text-decoration: none;
+            font-weight: bold;
+            font-size: 14px;
+        ">@VyudAiBot</a>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    st.markdown("---")
+    
+    # Настройки сертификата
+    st.markdown("### 📜 Настройки сертификата")
     logo_file = st.file_uploader("Логотип компании", type=['png', 'jpg', 'jpeg'], key="logo_uploader")
     signature_file = st.file_uploader("Подпись руководителя", type=['png', 'jpg', 'jpeg'], key="sig_uploader")
     if logo_file: st.image(logo_file, width=150)
@@ -351,11 +387,6 @@ else:
                     st.session_state['done'] = False
                     st.session_state['test_start_time'] = datetime.now()
                     st.rerun()
-
-        st.divider()
-        st.markdown("""<div style="background-color:#f0f9ff; padding:15px; border-radius:10px; border:1px solid #bae6fd">
-        <h4>🤖 Обучение на бегу</h4>
-        <p>Используйте Telegram Бота: <a href="https://t.me/VyudAiBot" target="_blank">@VyudAiBot</a></p></div>""", unsafe_allow_html=True)
 
     # ==================== ВКЛАДКА 2: МОИ ТЕСТЫ ====================
     with main_tab2:
