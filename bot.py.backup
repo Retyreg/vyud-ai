@@ -41,48 +41,7 @@ supabase = create_client(
     os.getenv("SUPABASE_URL"),
     os.getenv("SUPABASE_KEY")
 )
-# ============================================
-# WELCOME CREDITS ДЛЯ НОВЫХ ПОЛЬЗОВАТЕЛЕЙ
-# ============================================
 
-WELCOME_CREDITS = 5
-
-async def ensure_user_credits(telegram_id: int, username: str = None):
-    """
-    Проверяет наличие пользователя в БД.
-    Если новый — создаёт запись с welcome-кредитами.
-    """
-    try:
-        response = supabase.table('users_credits') \
-            .select('credits') \
-            .eq('telegram_id', telegram_id) \
-            .execute()
-        
-        if response.data:
-            return response.data[0]['credits']
-        else:
-            # Новый пользователь — выдаём welcome-кредиты
-            user_email = f"{telegram_id}@telegram.io"
-            
-            supabase.table('users_credits').insert({
-                'email': user_email,
-                'telegram_id': telegram_id,
-                'username': username or 'unknown',
-                'credits': WELCOME_CREDITS,
-                'role': 'user',
-                'tariff': 'free',
-                'telegram_premium': False,
-                'total_generations': 0
-            }).execute()
-            
-            print(f"✅ Новый пользователь {telegram_id} (@{username}) получил {WELCOME_CREDITS} кредитов")
-            return WELCOME_CREDITS
-            
-    except Exception as e:
-        import traceback
-        print(f"❌ Ошибка БД для user {telegram_id}: {e}")
-        print(f"Traceback: {traceback.format_exc()}")
-    return 0
 router = Router()
 bot = Bot(token=TOKEN)
 WEB_APP_URL = "https://app.vyud.online"
@@ -142,19 +101,12 @@ async def process_media_background(message: Message, file_id: str, file_name: st
         if not quiz_data:
             await status_msg.edit_text("❌ Quiz generation failed")
             return
-        questions_json = [{"question": q.scenario, "options": q.options, "correct_option_id": q.correct_option_id, "explanation": q.explanation} for q in quiz_data.questions]
+        questions_json = [{"question": q.question, "options": q.options, "correct_option_id": q.correct_option_id, "explanation": q.explanation} for q in quiz_data.questions]
         test_title = f"Audio test {datetime.now().strftime('%d.%m %H:%M')}"
         test_id = await asyncio.to_thread(save_quiz, user_email, test_title, questions_json, getattr(quiz_data, "hints", []))
         await update_user_profile(message.from_user, generation_type="audio" if is_audio else "video")
-        await asyncio.to_thread(deduct_credit, user_email, 1)
+        await deduct_credit(user_email, 1)
         await status_msg.edit_text(f"✅ <b>Test ready!</b>\n\n📝 {len(questions_json)} questions", parse_mode="HTML", reply_markup=create_web_keyboard(test_id))
-        # Отправляем квизы в чат
-        for i, q in enumerate(quiz_data.questions, 1):
-            try:
-                await bot.send_poll(chat_id=message.chat.id, question=f"{i}. {q.scenario[:250]}", options=[opt[:95] for opt in q.options], type="quiz", correct_option_id=q.correct_option_id, explanation=q.explanation[:195] if q.explanation else None, is_anonymous=False)
-                await asyncio.sleep(0.3)
-            except Exception as e:
-                logging.error(f"Poll error: {e}")
     except Exception as e:
         logging.error(f"Error: {e}")
         await status_msg.edit_text(f"❌ Error: {str(e)[:100]}")
@@ -164,41 +116,11 @@ async def process_media_background(message: Message, file_id: str, file_name: st
 
 @router.message(Command("start"))
 async def cmd_start(message: Message):
-    telegram_id = message.from_user.id
-    username = message.from_user.username
-    
-    # Получаем/создаём пользователя
-    credits = await ensure_user_credits(telegram_id, username)
-    
-    # Проверяем, новый ли пользователь
-    response = supabase.table('users_credits') \
-        .select('created_at') \
-        .eq('telegram_id', telegram_id) \
-        .execute()
-    
-    from datetime import datetime, timedelta
-    is_new_user = False
-    if response.data:
-        created_at = datetime.fromisoformat(response.data[0]['created_at'].replace('Z', '+00:00'))
-        is_new_user = datetime.now(created_at.tzinfo) - created_at < timedelta(seconds=10)
-    
-    if is_new_user:
-        welcome_text = (
-            f"🎁 Добро пожаловать в VYUD AI!\n\n"
-            f"Тебе начислено {WELCOME_CREDITS} бесплатных кредитов для тестирования.\n\n"
-            f"📤 Отправь документ (PDF/DOCX), аудио или видео — я превращу его в интерактивный тест за секунды!\n\n"
-            f"💳 Баланс: {credits} кредитов"
-        )
-    else:
-        welcome_text = (
-            f"С возвращением! 👋\n\n"
-            f"💳 Твой баланс: {credits} кредитов\n\n"
-            f"Отправь файл, чтобы сгенерировать новый тест."
-        )
-    
-    await message.answer(welcome_text)
-
-    # ...
+    await update_user_profile(message.from_user)
+    user_email = get_user_email(message)
+    credits = await asyncio.to_thread(get_credits, user_email)
+    premium_badge = "⭐ Premium" if message.from_user.is_premium else ""
+    await message.answer(f"👋 Welcome to <b>VYUD AI</b>! {premium_badge}\n\n💳 Credits: <b>{credits}</b>\n\n📤 Send me:\n• Document (PDF/DOCX/PPTX)\n• Audio/Video\n• Voice message\n\nI'll create an interactive quiz!", parse_mode="HTML", reply_markup=create_web_keyboard())
 
 @router.message(Command("profile"))
 async def cmd_profile(message: Message):
@@ -229,8 +151,6 @@ async def cmd_help(message: Message):
 
 @router.message(F.document)
 async def handle_document(message: Message):
-    telegram_id = message.from_user.id
-    credits = await ensure_user_credits(telegram_id, message.from_user.username)
     await update_user_profile(message.from_user)
     user_email = get_user_email(message)
     credits = await asyncio.to_thread(get_credits, user_email)
@@ -256,19 +176,12 @@ async def handle_document(message: Message):
         if not quiz_data:
             await status_msg.edit_text("❌ Quiz generation failed")
             return
-        questions_json = [{"question": q.scenario, "options": q.options, "correct_option_id": q.correct_option_id, "explanation": q.explanation} for q in quiz_data.questions]
+        questions_json = [{"question": q.question, "options": q.options, "correct_option_id": q.correct_option_id, "explanation": q.explanation} for q in quiz_data.questions]
         test_title = doc.file_name or "Document test"
         test_id = await asyncio.to_thread(save_quiz, user_email, test_title, questions_json, getattr(quiz_data, "hints", []))
         await update_user_profile(message.from_user, generation_type="document")
-        await asyncio.to_thread(deduct_credit, user_email, 1)
+        await deduct_credit(user_email, 1)
         await status_msg.edit_text(f"✅ <b>Test ready!</b>\n\n📝 {len(questions_json)} questions", parse_mode="HTML", reply_markup=create_web_keyboard(test_id))
-        # Отправляем квизы в чат
-        for i, q in enumerate(quiz_data.questions, 1):
-            try:
-                await bot.send_poll(chat_id=message.chat.id, question=f"{i}. {q.scenario[:250]}", options=[opt[:95] for opt in q.options], type="quiz", correct_option_id=q.correct_option_id, explanation=q.explanation[:195] if q.explanation else None, is_anonymous=False)
-                await asyncio.sleep(0.3)
-            except Exception as e:
-                logging.error(f"Poll error: {e}")
     except Exception as e:
         logging.error(f"Error: {e}")
         await status_msg.edit_text(f"❌ Error: {str(e)[:100]}")
@@ -278,8 +191,6 @@ async def handle_document(message: Message):
 
 @router.message(F.audio | F.voice)
 async def handle_audio(message: Message):
-    telegram_id = message.from_user.id
-    credits = await ensure_user_credits(telegram_id, message.from_user.username)
     await update_user_profile(message.from_user)
     user_email = get_user_email(message)
     credits = await asyncio.to_thread(get_credits, user_email)
@@ -295,8 +206,6 @@ async def handle_audio(message: Message):
 
 @router.message(F.video | F.video_note)
 async def handle_video(message: Message):
-    telegram_id = message.from_user.id
-    credits = await ensure_user_credits(telegram_id, message.from_user.username)
     await update_user_profile(message.from_user)
     user_email = get_user_email(message)
     credits = await asyncio.to_thread(get_credits, user_email)
