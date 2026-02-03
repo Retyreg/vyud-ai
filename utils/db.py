@@ -35,7 +35,7 @@ supabase: Client = create_client(URL, KEY)
 # Это спасет от кратковременных падений Supavisor
 RETRY_STRATEGY = retry(
     stop=stop_after_attempt(5),
-    wait=wait_exponential(multiplier=1, min=2, max=10),
+    wait=wait_exponential(multiplier=1, min=1, max=10),
     retry=retry_if_exception_type((APIError, ConnectionError, TimeoutError)),
     before_sleep=lambda retry_state: logger.warning(f"Supabase connection glitch. Retrying... {retry_state.attempt_number}")
 )
@@ -100,7 +100,11 @@ class Database:
     @staticmethod
     @RETRY_STRATEGY
     def deduct_credit(email: str, amount: int = 1) -> bool:
-        """Списывает кредиты атомарно (или через проверку)"""
+        """
+        Списывает кредиты (или через проверку).
+        Note: Not fully atomic - race conditions possible in high concurrency scenarios.
+        For production, consider using database-level transactions or atomic UPDATE with WHERE.
+        """
         try:
             current = Database.get_user_credits(email)
             if current >= amount:
@@ -116,7 +120,10 @@ class Database:
     @staticmethod
     @RETRY_STRATEGY
     def add_credits(email: str, amount: int) -> bool:
-        """Добавляет кредиты пользователю"""
+        """
+        Добавляет кредиты пользователю.
+        Note: Not fully atomic - race conditions possible in high concurrency scenarios.
+        """
         try:
             result = supabase.table("users_credits").select("credits").eq("email", email).execute()
             if result.data and len(result.data) > 0:

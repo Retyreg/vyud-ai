@@ -64,7 +64,7 @@ async def ensure_user_credits(telegram_id: int, username: str = None):
         # Use retry-enabled database if available
         if USE_RETRY_DB:
             response = await asyncio.to_thread(
-                lambda: Database.get_user_by_telegram_id(telegram_id)
+                Database.get_user_by_telegram_id, telegram_id
             )
         else:
             response_data = supabase.table('users_credits') \
@@ -117,7 +117,7 @@ async def update_user_profile(user, generation_type: str = None):
         # Get existing user data
         if USE_RETRY_DB:
             existing = await asyncio.to_thread(
-                lambda: Database.get_user_by_telegram_id(user.id)
+                Database.get_user_by_telegram_id, user.id
             )
             total_gens = existing.get("total_generations", 0) if existing else 0
             current_tariff = existing.get("tariff", "free") if existing else "free"

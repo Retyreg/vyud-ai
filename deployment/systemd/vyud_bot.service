@@ -4,7 +4,9 @@ After=network.target
 # Ждем сеть, чтобы не ловить ConnectionError на старте
 
 [Service]
-User=root
+# Run as dedicated user for security (create with: sudo useradd -r -s /bin/false vyud)
+User=vyud
+Group=vyud
 WorkingDirectory=/var/www/vyud_app
 # Абсолютный путь к Python в venv
 ExecStart=/var/www/vyud_app/venv/bin/python bot.py
