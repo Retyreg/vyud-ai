@@ -1,7 +1,15 @@
 .env
 venv/
-.env
-venv/
 .streamlit/secrets.toml
 *.log
 .env.save
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/

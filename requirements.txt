@@ -1,5 +1,6 @@
 streamlit
-supabase
+supabase==2.3.0
+tenacity==8.2.3
 openai
 llama-index-core
 llama-index-llms-openai

@@ -4,8 +4,16 @@ import auth
 import os
 import pandas as pd
 
+# Import retry-enabled database
+try:
+    from utils.db import Database
+    USE_RETRY_DB = True
+except ImportError:
+    USE_RETRY_DB = False
+    Database = None
+
 # 1. КОНФИГУРАЦИЯ
-st.set_page_config(page_title="VYUD AI", page_icon="��", layout="wide")
+st.set_page_config(page_title="VYUD AI", page_icon="🎓", layout="wide")
 
 # 2. CSS
 st.markdown("""
@@ -166,16 +174,24 @@ else:
              
         if st.button("Показать пользователей"):
             try:
-                data = auth.supabase.table('users_credits').select("*").execute()
-                st.dataframe(pd.DataFrame(data.data))
+                if USE_RETRY_DB:
+                    data = Database.get_all_users()
+                    st.dataframe(pd.DataFrame(data))
+                else:
+                    data = auth.supabase.table('users_credits').select("*").execute()
+                    st.dataframe(pd.DataFrame(data.data))
             except: st.error("Ошибка БД")
         c_a1, c_a2 = st.columns(2)
         with c_a1: t_e = st.text_input("Email пользователя")
         with c_a2: 
             if st.button("💰 +50 Кредитов"):
                 try:
-                    res = auth.supabase.table('users_credits').select("*").eq('email', t_e).execute()
-                    if res.data:
-                        auth.supabase.table('users_credits').update({'credits': res.data[0]['credits'] + 50}).eq('email', t_e).execute()
+                    if USE_RETRY_DB:
+                        Database.add_credits(t_e, 50)
                         st.success("Начислено!")
+                    else:
+                        res = auth.supabase.table('users_credits').select("*").eq('email', t_e).execute()
+                        if res.data:
+                            auth.supabase.table('users_credits').update({'credits': res.data[0]['credits'] + 50}).eq('email', t_e).execute()
+                            st.success("Начислено!")
                 except: st.error("Ошибка")

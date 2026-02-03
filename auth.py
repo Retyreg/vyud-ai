@@ -4,6 +4,14 @@ import hashlib
 import sqlite3
 import os
 
+# Import the new Database class with retry logic
+try:
+    from utils.db import Database, supabase as db_supabase
+    USE_RETRY_DB = True
+except ImportError:
+    USE_RETRY_DB = False
+    db_supabase = None
+
 DB_FILE = "users.db"
 
 def init_db():
@@ -59,6 +67,14 @@ def get_supabase():
 
 def save_quiz(user_email, title, questions, hints=""):
     """Сохраняет тест в БД"""
+    # Use retry-enabled database if available
+    if USE_RETRY_DB:
+        try:
+            return Database.save_quiz(user_email, title, questions, hints)
+        except Exception as e:
+            print(f"Error saving quiz with retry DB: {e}")
+    
+    # Fallback to original implementation
     try:
         import uuid
         import json
@@ -86,6 +102,14 @@ def save_quiz(user_email, title, questions, hints=""):
 
 def get_user_quizzes(user_email, limit=50):
     """Получает все тесты пользователя"""
+    # Use retry-enabled database if available
+    if USE_RETRY_DB:
+        try:
+            return Database.get_user_quizzes(user_email, limit)
+        except Exception as e:
+            print(f"Error getting quizzes with retry DB: {e}")
+    
+    # Fallback to original implementation
     try:
         supabase_client = get_supabase()
         if supabase_client:
@@ -103,6 +127,14 @@ def get_user_quizzes(user_email, limit=50):
 
 def get_quiz_by_id(quiz_id):
     """Получает тест по ID"""
+    # Use retry-enabled database if available
+    if USE_RETRY_DB:
+        try:
+            return Database.get_quiz_by_id(quiz_id)
+        except Exception as e:
+            print(f"Error getting quiz with retry DB: {e}")
+    
+    # Fallback to original implementation
     try:
         import json
         supabase_client = get_supabase()
@@ -125,6 +157,14 @@ def get_quiz_by_id(quiz_id):
 
 def get_public_test(slug):
     """Получает публичный тест по slug"""
+    # Use retry-enabled database if available
+    if USE_RETRY_DB:
+        try:
+            return Database.get_public_test(slug)
+        except Exception as e:
+            print(f"Error getting public test with retry DB: {e}")
+    
+    # Fallback to original implementation
     try:
         import json
         supabase_client = get_supabase()
@@ -147,6 +187,14 @@ def get_public_test(slug):
         return None
 
 def get_user_credits(email):
+    # Use retry-enabled database if available
+    if USE_RETRY_DB:
+        try:
+            return Database.get_user_credits(email)
+        except Exception as e:
+            print(f"Error getting credits with retry DB: {e}")
+    
+    # Fallback to Supabase without retry
     try:
         supabase = get_supabase()
         if supabase:
@@ -155,6 +203,8 @@ def get_user_credits(email):
                 return result.data[0]["credits"]
     except:
         pass
+    
+    # Fallback to SQLite
     try:
         init_db()
         conn = sqlite3.connect(DB_FILE)
@@ -167,6 +217,14 @@ def get_user_credits(email):
         return 0
 
 def deduct_credit(email, amount=1):
+    # Use retry-enabled database if available
+    if USE_RETRY_DB:
+        try:
+            return Database.deduct_credit(email, amount)
+        except Exception as e:
+            print(f"Error deducting credits with retry DB: {e}")
+    
+    # Fallback to Supabase without retry
     try:
         supabase = get_supabase()
         if supabase:
@@ -176,6 +234,8 @@ def deduct_credit(email, amount=1):
                 return True
     except:
         pass
+    
+    # Fallback to SQLite
     try:
         init_db()
         conn = sqlite3.connect(DB_FILE)
@@ -188,6 +248,14 @@ def deduct_credit(email, amount=1):
         return False
 
 def add_credits(email, amount):
+    # Use retry-enabled database if available
+    if USE_RETRY_DB:
+        try:
+            return Database.add_credits(email, amount)
+        except Exception as e:
+            print(f"Error adding credits with retry DB: {e}")
+    
+    # Fallback to Supabase without retry
     try:
         supabase = get_supabase()
         if supabase:

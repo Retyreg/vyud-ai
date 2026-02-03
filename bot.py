@@ -9,6 +9,14 @@ from aiogram.types import Message, BotCommand, BotCommandScopeDefault, InlineKey
 from supabase import create_client
 from datetime import datetime
 
+# Import retry-enabled database
+try:
+    from utils.db import Database
+    USE_RETRY_DB = True
+except ImportError:
+    USE_RETRY_DB = False
+    Database = None
+
 try:
     from logic import transcribe_for_bot as transcribe_audio, generate_quiz_ai as generate_quiz_struct, process_file_to_text_bot as process_file_to_text
     from auth import get_user_credits as get_credits, deduct_credit, save_quiz, get_user_quizzes
@@ -53,18 +61,25 @@ async def ensure_user_credits(telegram_id: int, username: str = None):
     Если новый — создаёт запись с welcome-кредитами.
     """
     try:
-        response = supabase.table('users_credits') \
-            .select('credits') \
-            .eq('telegram_id', telegram_id) \
-            .execute()
+        # Use retry-enabled database if available
+        if USE_RETRY_DB:
+            response = await asyncio.to_thread(
+                Database.get_user_by_telegram_id, telegram_id
+            )
+        else:
+            response_data = supabase.table('users_credits') \
+                .select('credits') \
+                .eq('telegram_id', telegram_id) \
+                .execute()
+            response = response_data.data[0] if response_data.data else None
         
-        if response.data:
-            return response.data[0]['credits']
+        if response:
+            return response['credits']
         else:
             # Новый пользователь — выдаём welcome-кредиты
             user_email = f"{telegram_id}@telegram.io"
             
-            supabase.table('users_credits').insert({
+            user_data = {
                 'email': user_email,
                 'telegram_id': telegram_id,
                 'username': username or 'unknown',
@@ -73,7 +88,12 @@ async def ensure_user_credits(telegram_id: int, username: str = None):
                 'tariff': 'free',
                 'telegram_premium': False,
                 'total_generations': 0
-            }).execute()
+            }
+            
+            if USE_RETRY_DB:
+                await asyncio.to_thread(Database.upsert_user, user_data)
+            else:
+                supabase.table('users_credits').insert(user_data).execute()
             
             print(f"✅ Новый пользователь {telegram_id} (@{username}) получил {WELCOME_CREDITS} кредитов")
             return WELCOME_CREDITS
@@ -93,17 +113,50 @@ logging.basicConfig(level=logging.INFO)
 async def update_user_profile(user, generation_type: str = None):
     try:
         user_email = f"{user.username or f'user{user.id}'}@telegram.io"
-        existing = supabase.table("users_credits").select("total_generations, tariff").eq("telegram_id", user.id).execute()
-        total_gens = 0
-        current_tariff = "free"
-        if existing.data and len(existing.data) > 0:
-            total_gens = existing.data[0].get("total_generations", 0)
-            current_tariff = existing.data[0].get("tariff", "free")
+        
+        # Get existing user data
+        if USE_RETRY_DB:
+            existing = await asyncio.to_thread(
+                Database.get_user_by_telegram_id, user.id
+            )
+            total_gens = existing.get("total_generations", 0) if existing else 0
+            current_tariff = existing.get("tariff", "free") if existing else "free"
+        else:
+            existing = supabase.table("users_credits").select("total_generations, tariff").eq("telegram_id", user.id).execute()
+            total_gens = 0
+            current_tariff = "free"
+            if existing.data and len(existing.data) > 0:
+                total_gens = existing.data[0].get("total_generations", 0)
+                current_tariff = existing.data[0].get("tariff", "free")
+        
         if generation_type:
             total_gens += 1
-            supabase.table("generation_logs").insert({"telegram_id": user.id, "email": user_email, "generation_type": generation_type}).execute()
-        user_data = {"telegram_id": user.id, "email": user_email, "username": user.username, "first_name": user.first_name, "telegram_premium": user.is_premium or False, "last_seen": datetime.utcnow().isoformat(), "total_generations": total_gens, "tariff": current_tariff}
-        supabase.table("users_credits").upsert(user_data, on_conflict="telegram_id").execute()
+            if USE_RETRY_DB:
+                await asyncio.to_thread(
+                    Database.insert_generation_log,
+                    user.id,
+                    user_email,
+                    generation_type
+                )
+            else:
+                supabase.table("generation_logs").insert({"telegram_id": user.id, "email": user_email, "generation_type": generation_type}).execute()
+        
+        user_data = {
+            "telegram_id": user.id,
+            "email": user_email,
+            "username": user.username,
+            "first_name": user.first_name,
+            "telegram_premium": user.is_premium or False,
+            "last_seen": datetime.utcnow().isoformat(),
+            "total_generations": total_gens,
+            "tariff": current_tariff
+        }
+        
+        if USE_RETRY_DB:
+            await asyncio.to_thread(Database.upsert_user, user_data)
+        else:
+            supabase.table("users_credits").upsert(user_data, on_conflict="telegram_id").execute()
+        
         logging.info(f"✅ Updated profile for {user.username} (Premium: {user.is_premium})")
         return True
     except Exception as e:
