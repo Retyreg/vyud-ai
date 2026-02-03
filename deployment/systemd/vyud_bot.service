@@ -1,0 +1,19 @@
+[Unit]
+Description=Vyud AI Telegram Bot
+After=network.target
+# Ждем сеть, чтобы не ловить ConnectionError на старте
+
+[Service]
+User=root
+WorkingDirectory=/var/www/vyud_app
+# Абсолютный путь к Python в venv
+ExecStart=/var/www/vyud_app/venv/bin/python bot.py
+# Авторестарт при падении
+Restart=always
+# Пауза 5 сек перед рестартом, чтобы не насиловать CPU
+RestartSec=5
+# Переменные окружения (безопаснее, чем .env файл в git)
+EnvironmentFile=/var/www/vyud_app/.env
+
+[Install]
+WantedBy=multi-user.target
