@@ -8,7 +8,8 @@ from aiogram import Bot, Dispatcher, Router, F
 from aiogram.filters import Command, CommandObject
 from aiogram.types import (
     Message, BotCommand, BotCommandScopeDefault,
-    InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+    InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery,
+    InlineQuery, InlineQueryResultArticle, InputTextMessageContent
 )
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -245,6 +246,71 @@ async def process_referral_payment(telegram_id: int, payment_amount: float) -> d
     except Exception as e:
         logging.error(f"Ошибка обработки платежа реферала: {e}")
         return {"success": False, "commission": 0}
+
+
+# ============================================
+# ТРЕКИНГ ИСТОЧНИКОВ ТРАФИКА (UTM)
+# ============================================
+
+# Известные источники для красивых имён в аналитике
+SOURCE_LABELS = {
+    "src_tgads": "Telegram Ads",
+    "src_youtube": "YouTube",
+    "src_catalog": "Каталог ботов",
+    "src_vk": "ВКонтакте",
+    "src_reels": "Instagram Reels",
+    "src_site": "Сайт vyud.tech",
+    "src_landing": "Лендинг vyud.online",
+}
+
+
+def parse_start_param(args: str | None) -> dict:
+    """
+    Парсит параметр /start и определяет тип:
+    - ref_CODE → реферал
+    - src_NAME → источник трафика
+    - None → органика (direct)
+    """
+    if not args:
+        return {"type": "direct", "value": "organic"}
+    
+    if args.startswith("ref_"):
+        return {"type": "referral", "value": args}
+    elif args.startswith("src_"):
+        return {"type": "source", "value": args}
+    else:
+        return {"type": "unknown", "value": args}
+
+
+async def track_user_source(telegram_id: int, source: str, username: str = None):
+    """Сохраняет источник трафика в Supabase."""
+    try:
+        # Проверяем, не записан ли уже источник для этого юзера
+        existing = supabase.table("users_credits") \
+            .select("source") \
+            .eq("telegram_id", telegram_id) \
+            .execute()
+        
+        # Обновляем source только если ещё не был записан
+        if existing.data and not existing.data[0].get("source"):
+            supabase.table("users_credits") \
+                .update({"source": source}) \
+                .eq("telegram_id", telegram_id) \
+                .execute()
+        
+        # Логируем событие в отдельную таблицу для детальной аналитики
+        supabase.table("traffic_events").insert({
+            "telegram_id": telegram_id,
+            "source": source,
+            "username": username or "unknown"
+        }).execute()
+        
+        source_label = SOURCE_LABELS.get(source, source)
+        logging.info(f"📊 Трафик: {telegram_id} (@{username}) из {source_label}")
+        
+    except Exception as e:
+        # Если таблицы traffic_events нет — не страшно, просто логируем
+        logging.warning(f"⚠️ Трекинг источника (не критично): {e}")
 
 
 # ============================================
@@ -574,15 +640,26 @@ async def cmd_start(message: Message, command: CommandObject, state: FSMContext)
     telegram_id = message.from_user.id
     username = message.from_user.username
     
-    # Реферальная обработка
-    ref_code = extract_ref_code(command.args) if command.args else None
+    # Парсим параметр /start (реферал, UTM-источник или органика)
+    start_info = parse_start_param(command.args)
     partner_name = None
     
-    if ref_code:
-        result = await save_referral(telegram_id, ref_code, username)
+    if start_info["type"] == "referral":
+        # Реферальная обработка
+        result = await save_referral(telegram_id, start_info["value"], username)
         if result["success"]:
             partner_name = result["partner_name"]
             await notify_admin(result["notification"])
+        # Трекаем реферала как источник тоже
+        await track_user_source(telegram_id, start_info["value"], username)
+    
+    elif start_info["type"] == "source":
+        # UTM-источник (src_tgads, src_youtube, etc.)
+        await track_user_source(telegram_id, start_info["value"], username)
+    
+    else:
+        # Органика или unknown
+        await track_user_source(telegram_id, start_info["value"], username)
     
     credits = await ensure_user_credits(telegram_id, username)
     
@@ -602,14 +679,22 @@ async def cmd_start(message: Message, command: CommandObject, state: FSMContext)
         if partner_name:
             welcome_text += f"🤝 Вас пригласил: {partner_name}\n\n"
         welcome_text += (
-            f"Тебе начислено {WELCOME_CREDITS} бесплатных кредитов.\n\n"
+            f"Тебе начислено <b>{WELCOME_CREDITS} бесплатных кредитов</b>.\n\n"
             f"<b>Как это работает:</b>\n"
-            f"📤 Отправь документ (PDF/DOCX), аудио или видео\n"
-            f"⚙️ Выбери параметры теста\n"
-            f"✅ Получи интерактивный курс за секунды!\n\n"
-            f"Или используй /create для пошагового создания.\n\n"
-            f"💳 Баланс: {credits} кредитов"
+            f"1️⃣ Отправь документ (PDF/DOCX), аудио или видео\n"
+            f"2️⃣ Выбери параметры теста\n"
+            f"3️⃣ Получи интерактивный курс за секунды!\n\n"
+            f"Попробуй прямо сейчас 👇"
         )
+        
+        # Onboarding-кнопки — подталкиваем к первому действию
+        onboarding_kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📝 Создать курс пошагово", callback_data="onboard_create")],
+            [InlineKeyboardButton(text="📎 Просто отправь файл в чат!", callback_data="onboard_file_hint")],
+            [InlineKeyboardButton(text="🌐 Открыть веб-версию", url=WEB_APP_URL)],
+        ])
+        
+        await message.answer(welcome_text, parse_mode="HTML", reply_markup=onboarding_kb)
     else:
         welcome_text = (
             f"С возвращением! 👋\n\n"
@@ -617,8 +702,48 @@ async def cmd_start(message: Message, command: CommandObject, state: FSMContext)
             f"📤 Отправь файл — выбери настройки — получи тест\n"
             f"📝 Или /create для пошагового создания курса"
         )
+        await message.answer(welcome_text, parse_mode="HTML")
+
+
+# ============================================
+# ONBOARDING CALLBACKS
+# ============================================
+
+@router.callback_query(F.data == "onboard_create")
+async def onboard_create(callback: CallbackQuery, state: FSMContext):
+    """Запускает /create визард из onboarding."""
+    await callback.answer()
     
-    await message.answer(welcome_text, parse_mode="HTML")
+    user_email = f"{callback.from_user.username or f'user{callback.from_user.id}'}@telegram.io"
+    credits = await asyncio.to_thread(get_credits, user_email)
+    if credits < 1:
+        await callback.message.answer("❌ Недостаточно кредитов!", reply_markup=create_web_keyboard())
+        return
+    
+    await state.set_state(CreateCourse.waiting_for_title)
+    await callback.message.answer(
+        "📝 <b>Создание курса — шаг 1/3</b>\n\n"
+        "Введи название курса:\n\n"
+        "<i>Например: «Онбординг новых сотрудников» или «Основы Python»</i>\n\n"
+        "Отмена: /cancel",
+        parse_mode="HTML"
+    )
+
+
+@router.callback_query(F.data == "onboard_file_hint")
+async def onboard_file_hint(callback: CallbackQuery):
+    """Подсказка про отправку файла."""
+    await callback.answer()
+    await callback.message.answer(
+        "📎 <b>Просто отправь файл прямо сюда!</b>\n\n"
+        "Поддерживаемые форматы:\n"
+        "• 📄 PDF, DOCX — документы\n"
+        "• 🎙️ MP3, голосовые сообщения\n"
+        "• 🎬 MP4, видеокружки\n\n"
+        f"Макс. размер: {MAX_FILE_SIZE_MB}MB\n\n"
+        "⬇️ Нажми скрепку 📎 внизу и выбери файл!",
+        parse_mode="HTML"
+    )
 
 
 # ============================================
@@ -1219,6 +1344,144 @@ async def cmd_help(message: Message):
 
 
 # ============================================
+# ВИРАЛЬНЫЙ ШЕРИНГ ТЕСТОВ (Inline Mode)
+# ============================================
+
+@router.inline_query()
+async def handle_inline_query(inline_query: InlineQuery):
+    """
+    Обрабатывает inline-запросы для шеринга тестов.
+    Пользователь набирает @VyudAiBot в любом чате → видит свои тесты.
+    """
+    user_email = f"{inline_query.from_user.username or f'user{inline_query.from_user.id}'}@telegram.io"
+    query_text = inline_query.query.strip()
+    
+    try:
+        quizzes = await asyncio.to_thread(get_user_quizzes, user_email)
+        
+        if not quizzes:
+            # Если тестов нет — предлагаем создать
+            results = [
+                InlineQueryResultArticle(
+                    id="no_tests",
+                    title="У вас пока нет тестов",
+                    description="Отправьте файл боту чтобы создать первый тест!",
+                    input_message_content=InputTextMessageContent(
+                        message_text=(
+                            "🎓 <b>VYUD AI</b> — превращает документы в интерактивные тесты за секунды!\n\n"
+                            "📤 Отправь PDF, аудио или видео → получи готовый курс.\n\n"
+                            f"👉 Попробуй: @VyudAiBot"
+                        ),
+                        parse_mode="HTML"
+                    )
+                )
+            ]
+            await inline_query.answer(results, cache_time=10)
+            return
+        
+        results = []
+        for i, q in enumerate(quizzes[:10]):
+            test_id = q.get("id", "")
+            title = q.get("title", "Без названия")
+            
+            # Фильтруем по query если есть
+            if query_text and query_text.lower() not in title.lower():
+                continue
+            
+            # Если query содержит test_ID — показываем именно этот тест
+            if query_text.startswith("test_") and test_id != query_text.replace("test_", ""):
+                continue
+            
+            share_text = (
+                f"🎓 <b>{title}</b>\n\n"
+                f"Пройди интерактивный тест прямо в браузере!\n\n"
+                f"👉 {WEB_APP_URL}/?test={test_id}\n\n"
+                f"<i>Создано в VYUD AI — @VyudAiBot</i>"
+            )
+            
+            results.append(
+                InlineQueryResultArticle(
+                    id=f"test_{test_id}" if test_id else f"test_{i}",
+                    title=title,
+                    description="Нажми чтобы поделиться этим тестом",
+                    input_message_content=InputTextMessageContent(
+                        message_text=share_text,
+                        parse_mode="HTML"
+                    )
+                )
+            )
+        
+        if not results:
+            results = [
+                InlineQueryResultArticle(
+                    id="not_found",
+                    title="Тесты не найдены",
+                    description="Попробуйте другой запрос",
+                    input_message_content=InputTextMessageContent(
+                        message_text="🔍 Тест не найден. Создай новый: @VyudAiBot"
+                    )
+                )
+            ]
+        
+        await inline_query.answer(results, cache_time=30)
+        
+    except Exception as e:
+        logging.error(f"Inline query error: {e}")
+        await inline_query.answer([], cache_time=10)
+
+
+# ============================================
+# АДМИНСКИЕ КОМАНДЫ: АНАЛИТИКА ИСТОЧНИКОВ
+# ============================================
+
+@router.message(Command("stats"))
+async def cmd_stats(message: Message):
+    """Аналитика источников трафика (только для админа)."""
+    if str(message.from_user.id) != ADMIN_TELEGRAM_ID:
+        return
+    
+    try:
+        # Считаем по источникам из users_credits
+        users = supabase.table("users_credits") \
+            .select("source, telegram_id") \
+            .execute()
+        
+        source_counts = {}
+        total = 0
+        for u in users.data:
+            src = u.get("source") or "organic"
+            source_counts[src] = source_counts.get(src, 0) + 1
+            total += 1
+        
+        # Сортируем по количеству
+        sorted_sources = sorted(source_counts.items(), key=lambda x: x[1], reverse=True)
+        
+        text = f"📊 <b>Аналитика источников</b>\n"
+        text += f"Всего пользователей: <b>{total}</b>\n\n"
+        
+        for src, count in sorted_sources:
+            label = SOURCE_LABELS.get(src, src)
+            pct = round(count / total * 100, 1) if total > 0 else 0
+            bar = "█" * max(1, int(pct / 5))
+            text += f"{bar} <b>{label}</b>: {count} ({pct}%)\n"
+        
+        # Ссылки для маркетинга
+        bot_info = await bot.get_me()
+        bot_username = bot_info.username
+        
+        text += f"\n{'━' * 24}\n"
+        text += f"<b>Ссылки для каналов:</b>\n\n"
+        for src_key, src_label in SOURCE_LABELS.items():
+            link = f"https://t.me/{bot_username}?start={src_key}"
+            text += f"<b>{src_label}:</b>\n<code>{link}</code>\n\n"
+        
+        await message.answer(text, parse_mode="HTML")
+        
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {e}", parse_mode="HTML")
+
+
+# ============================================
 # АДМИНСКИЕ КОМАНДЫ (РЕФЕРАЛЬНАЯ СИСТЕМА)
 # ============================================
 
@@ -1337,7 +1600,7 @@ async def main():
     dp = Dispatcher(storage=storage)
     dp.include_router(router)
     await set_main_menu(bot)
-    logging.info("🤖 Bot started with inline settings + /create wizard!")
+    logging.info("🤖 Bot started with inline settings + /create wizard + UTM tracking + viral sharing!")
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
