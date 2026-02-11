@@ -3,6 +3,7 @@ import logging
 import os
 import json
 import toml
+import base64
 from pathlib import Path
 from aiogram import Bot, Dispatcher, Router, F
 from aiogram.filters import Command, CommandObject
@@ -69,6 +70,414 @@ logging.basicConfig(level=logging.INFO)
 
 router = Router()
 bot = Bot(token=TOKEN)
+
+# ============================================
+# TELEGRAM STARS PAYMENT INTEGRATION
+# ============================================
+
+# Тарифы в Telegram Stars
+PAYMENT_PLANS = {
+    # Пакеты кредитов (одноразовые)
+    "credits_10": {
+        "title": "10 кредитов",
+        "description": "Пакет из 10 кредитов для создания тестов",
+        "price": 50,  # Stars
+        "credits": 10,
+        "type": "credits"
+    },
+    "credits_50": {
+        "title": "50 кредитов",
+        "description": "Пакет из 50 кредитов для создания тестов",
+        "price": 200,  # Stars
+        "credits": 50,
+        "type": "credits"
+    },
+    "credits_100": {
+        "title": "100 кредитов",
+        "description": "Пакет из 100 кредитов для создания тестов",
+        "price": 350,  # Stars
+        "credits": 100,
+        "type": "credits"
+    },
+    # Подписки
+    "sub_month": {
+        "title": "Подписка на месяц",
+        "description": "100 кредитов/месяц + приоритетная генерация",
+        "price": 300,  # Stars
+        "credits": 100,
+        "type": "subscription",
+        "duration_days": 30
+    },
+    "sub_year": {
+        "title": "Подписка на год",
+        "description": "1200 кредитов/год + приоритетная генерация + скидка 17%",
+        "price": 3000,  # Stars
+        "credits": 1200,
+        "type": "subscription",
+        "duration_days": 365
+    }
+}
+
+
+async def add_credits_to_user(telegram_id: int, credits: int):
+    """Добавляет кредиты пользователю."""
+    try:
+        # Получаем текущий баланс
+        response = supabase.table('users_credits') \
+            .select('credits') \
+            .eq('telegram_id', telegram_id) \
+            .execute()
+
+        if response.data:
+            current_credits = response.data[0]['credits']
+            new_credits = current_credits + credits
+
+            # Обновляем баланс
+            supabase.table('users_credits') \
+                .update({'credits': new_credits}) \
+                .eq('telegram_id', telegram_id) \
+                .execute()
+
+            logging.info(f"✅ User {telegram_id}: {current_credits} -> {new_credits} (+{credits})")
+            return new_credits
+        else:
+            logging.error(f"❌ User {telegram_id} not found in database")
+            return None
+
+    except Exception as e:
+        logging.error(f"❌ Error adding credits to user {telegram_id}: {e}")
+        return None
+
+
+async def update_subscription(telegram_id: int, plan_id: str):
+    """Обновляет подписку пользователя."""
+    try:
+        plan = PAYMENT_PLANS[plan_id]
+        expires_at = datetime.now() + timedelta(days=plan["duration_days"])
+
+        supabase.table('users_credits') \
+            .update({
+                'tariff': plan_id,
+                'subscription_expires_at': expires_at.isoformat()
+            }) \
+            .eq('telegram_id', telegram_id) \
+            .execute()
+
+        logging.info(f"✅ User {telegram_id}: subscription {plan_id} until {expires_at}")
+        return expires_at
+
+    except Exception as e:
+        logging.error(f"❌ Error updating subscription for user {telegram_id}: {e}")
+        return None
+
+
+async def log_payment(
+    telegram_id: int,
+    plan_id: str,
+    amount_stars: int,
+    telegram_payment_charge_id: str,
+    provider_payment_charge_id: str,
+    username: str = None
+):
+    """Логирует платеж в таблицу payments_log."""
+    try:
+        plan = PAYMENT_PLANS[plan_id]
+        user_email = f"{telegram_id}@telegram.io"
+
+        payment_data = {
+            "telegram_id": telegram_id,
+            "email": user_email,
+            "username": username or "unknown",
+            "plan_id": plan_id,
+            "plan_title": plan["title"],
+            "amount_stars": amount_stars,
+            "credits_purchased": plan["credits"],
+            "payment_type": plan["type"],
+            "telegram_payment_charge_id": telegram_payment_charge_id,
+            "provider_payment_charge_id": provider_payment_charge_id,
+            "status": "completed"
+        }
+
+        result = supabase.table("payments_log").insert(payment_data).execute()
+
+        logging.info(f"💳 Payment logged: user {telegram_id}, plan {plan_id}, {amount_stars} stars")
+        return result.data[0] if result.data else None
+
+    except Exception as e:
+        logging.error(f"❌ Error logging payment: {e}")
+        return None
+
+
+def create_buy_keyboard() -> InlineKeyboardMarkup:
+    """Создает клавиатуру с тарифами для команды /buy."""
+    buttons = [
+        # Пакеты кредитов
+        [InlineKeyboardButton(
+            text=f"💳 {PAYMENT_PLANS['credits_10']['title']} — {PAYMENT_PLANS['credits_10']['price']} ⭐️",
+            callback_data="buy:credits_10"
+        )],
+        [InlineKeyboardButton(
+            text=f"💳 {PAYMENT_PLANS['credits_50']['title']} — {PAYMENT_PLANS['credits_50']['price']} ⭐️",
+            callback_data="buy:credits_50"
+        )],
+        [InlineKeyboardButton(
+            text=f"💳 {PAYMENT_PLANS['credits_100']['title']} — {PAYMENT_PLANS['credits_100']['price']} ⭐️",
+            callback_data="buy:credits_100"
+        )],
+        # Разделитель
+        [InlineKeyboardButton(text="━━━━━ ПОДПИСКИ ━━━━━", callback_data="noop")],
+        # Подписки
+        [InlineKeyboardButton(
+            text=f"⭐️ {PAYMENT_PLANS['sub_month']['title']} — {PAYMENT_PLANS['sub_month']['price']} ⭐️",
+            callback_data="buy:sub_month"
+        )],
+        [InlineKeyboardButton(
+            text=f"⭐️ {PAYMENT_PLANS['sub_year']['title']} — {PAYMENT_PLANS['sub_year']['price']} ⭐️",
+            callback_data="buy:sub_year"
+        )]
+    ]
+
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+# ============================================
+# КОМАНДА /buy
+# ============================================
+
+@router.message(Command("buy"))
+async def cmd_buy(message: Message):
+    """Показывает доступные тарифы."""
+    await update_user_profile(message.from_user)
+
+    # Получаем текущий баланс
+    telegram_id = message.from_user.id
+    response = supabase.table('users_credits') \
+        .select('credits, tariff, subscription_expires_at') \
+        .eq('telegram_id', telegram_id) \
+        .execute()
+
+    if response.data:
+        credits = response.data[0]['credits']
+        tariff = response.data[0].get('tariff', 'free')
+        sub_expires = response.data[0].get('subscription_expires_at')
+    else:
+        credits = 0
+        tariff = 'free'
+        sub_expires = None
+
+    # Формируем текст сообщения
+    text = (
+        f"💳 <b>Купить кредиты</b>\n\n"
+        f"💰 Твой баланс: <b>{credits} кредитов</b>\n"
+    )
+
+    if tariff != 'free' and sub_expires:
+        expires_dt = datetime.fromisoformat(sub_expires.replace('Z', '+00:00'))
+        text += f"📅 Подписка: <b>{tariff}</b> до {expires_dt.strftime('%d.%m.%Y')}\n"
+
+    text += (
+        f"\n{'━' * 24}\n\n"
+        f"<b>📦 Пакеты кредитов</b>\n"
+        f"• 10 кредитов — 50 ⭐️\n"
+        f"• 50 кредитов — 200 ⭐️ (скидка 20%)\n"
+        f"• 100 кредитов — 350 ⭐️ (скидка 30%)\n\n"
+        f"<b>⭐️ Подписки</b>\n"
+        f"• Месяц: 100 кредитов — 300 ⭐️\n"
+        f"• Год: 1200 кредитов — 3000 ⭐️ (скидка 17%)\n\n"
+        f"Выбери тариф ниже 👇"
+    )
+
+    await message.answer(
+        text,
+        parse_mode="HTML",
+        reply_markup=create_buy_keyboard()
+    )
+
+
+# ============================================
+# ОБРАБОТКА ПОКУПКИ
+# ============================================
+
+@router.callback_query(F.data.startswith("buy:"))
+async def process_buy_callback(callback: CallbackQuery):
+    """Обрабатывает выбор тарифа и создает инвойс."""
+    await callback.answer()
+
+    plan_id = callback.data.split(":")[1]
+
+    if plan_id not in PAYMENT_PLANS:
+        await callback.message.answer("❌ Неизвестный тариф")
+        return
+
+    plan = PAYMENT_PLANS[plan_id]
+
+    # Создаем инвойс Telegram Stars
+    try:
+        await bot.send_invoice(
+            chat_id=callback.message.chat.id,
+            title=plan["title"],
+            description=plan["description"],
+            payload=f"payment:{plan_id}:{callback.from_user.id}",
+            currency="XTR",  # Telegram Stars
+            prices=[{"label": plan["title"], "amount": plan["price"]}],
+            provider_token=""  # Для Telegram Stars токен не нужен
+        )
+
+        logging.info(f"📤 Invoice sent: user {callback.from_user.id}, plan {plan_id}")
+
+    except Exception as e:
+        logging.error(f"❌ Error creating invoice: {e}")
+        await callback.message.answer(
+            f"❌ Ошибка создания платежа: {str(e)[:100]}\n\n"
+            f"Попробуй позже или обратись в поддержку."
+        )
+
+
+# ============================================
+# ОБРАБОТЧИКИ ПЛАТЕЖЕЙ
+# ============================================
+
+@router.pre_checkout_query()
+async def process_pre_checkout_query(pre_checkout_query):
+    """Обрабатывает pre-checkout запрос (финальная проверка перед оплатой)."""
+    try:
+        # Парсим payload
+        payload_parts = pre_checkout_query.invoice_payload.split(":")
+        if len(payload_parts) != 3 or payload_parts[0] != "payment":
+            await bot.answer_pre_checkout_query(
+                pre_checkout_query.id,
+                ok=False,
+                error_message="Неверный формат платежа"
+            )
+            return
+
+        plan_id = payload_parts[1]
+        telegram_id = int(payload_parts[2])
+
+        # Проверяем, что тариф существует
+        if plan_id not in PAYMENT_PLANS:
+            await bot.answer_pre_checkout_query(
+                pre_checkout_query.id,
+                ok=False,
+                error_message="Неизвестный тариф"
+            )
+            return
+
+        # Проверяем, что пользователь существует в БД
+        response = supabase.table('users_credits') \
+            .select('telegram_id') \
+            .eq('telegram_id', telegram_id) \
+            .execute()
+
+        if not response.data:
+            await bot.answer_pre_checkout_query(
+                pre_checkout_query.id,
+                ok=False,
+                error_message="Пользователь не найден в системе"
+            )
+            return
+
+        # Все проверки пройдены — разрешаем платеж
+        await bot.answer_pre_checkout_query(pre_checkout_query.id, ok=True)
+
+        logging.info(f"✅ Pre-checkout OK: user {telegram_id}, plan {plan_id}")
+
+    except Exception as e:
+        logging.error(f"❌ Pre-checkout error: {e}")
+        await bot.answer_pre_checkout_query(
+            pre_checkout_query.id,
+            ok=False,
+            error_message="Ошибка обработки платежа"
+        )
+
+
+@router.message(F.successful_payment)
+async def process_successful_payment(message: Message):
+    """Обрабатывает успешный платеж."""
+    try:
+        payment = message.successful_payment
+
+        # Парсим payload
+        payload_parts = payment.invoice_payload.split(":")
+        plan_id = payload_parts[1]
+        telegram_id = int(payload_parts[2])
+
+        plan = PAYMENT_PLANS[plan_id]
+        username = message.from_user.username
+
+        # Логируем платеж
+        await log_payment(
+            telegram_id=telegram_id,
+            plan_id=plan_id,
+            amount_stars=plan["price"],
+            telegram_payment_charge_id=payment.telegram_payment_charge_id,
+            provider_payment_charge_id=payment.provider_payment_charge_id,
+            username=username
+        )
+
+        # Начисляем кредиты или активируем подписку
+        if plan["type"] == "credits":
+            # Одноразовый пакет кредитов
+            new_balance = await add_credits_to_user(telegram_id, plan["credits"])
+
+            success_text = (
+                f"✅ <b>Платеж успешен!</b>\n\n"
+                f"💳 Начислено: <b>{plan['credits']} кредитов</b>\n"
+                f"💰 Новый баланс: <b>{new_balance} кредитов</b>\n\n"
+                f"Спасибо за покупку! 🎉"
+            )
+
+        else:  # subscription
+            # Подписка
+            expires_at = await update_subscription(telegram_id, plan_id)
+            new_balance = await add_credits_to_user(telegram_id, plan["credits"])
+
+            success_text = (
+                f"✅ <b>Подписка активирована!</b>\n\n"
+                f"⭐️ Тариф: <b>{plan['title']}</b>\n"
+                f"💳 Начислено: <b>{plan['credits']} кредитов</b>\n"
+                f"💰 Баланс: <b>{new_balance} кредитов</b>\n"
+                f"📅 Активна до: <b>{expires_at.strftime('%d.%m.%Y')}</b>\n\n"
+                f"Спасибо за поддержку проекта! 🎉"
+            )
+
+        await message.answer(success_text, parse_mode="HTML")
+
+        # Обрабатываем реферальную комиссию (если есть)
+        result = await process_referral_payment(telegram_id, plan["price"] * 0.02)  # Конвертируем Stars в ~USD
+        if result.get("success") and result.get("notification"):
+            await notify_admin(result["notification"])
+
+        # Уведомляем админа о платеже
+        admin_notification = (
+            f"💰 <b>Новый платеж!</b>\n\n"
+            f"👤 User: @{username or 'unknown'} (<code>{telegram_id}</code>)\n"
+            f"💳 Тариф: {plan['title']}\n"
+            f"💎 Сумма: {plan['price']} ⭐️\n"
+            f"📦 Кредитов: +{plan['credits']}"
+        )
+        await notify_admin(admin_notification)
+
+        logging.info(f"💰 Payment completed: user {telegram_id}, plan {plan_id}, {plan['price']} stars")
+
+    except Exception as e:
+        logging.error(f"❌ Error processing successful payment: {e}")
+        import traceback
+        logging.error(traceback.format_exc())
+
+        await message.answer(
+            "⚠️ Платеж получен, но возникла ошибка при начислении кредитов.\n"
+            "Обратитесь в поддержку с указанием времени платежа.",
+            parse_mode="HTML"
+        )
+
+
+# Callback для неактивной кнопки (разделитель)
+@router.callback_query(F.data == "noop")
+async def noop_callback(callback: CallbackQuery):
+    await callback.answer()
+
+
 
 
 # ============================================
@@ -317,6 +726,38 @@ async def track_user_source(telegram_id: int, source: str, username: str = None)
 # ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 # ============================================
 
+
+
+def extract_text_from_image(file_path: str, api_key: str) -> str:
+    """Извлекает текст из изображения через GPT-4o Vision."""
+    try:
+        from openai import OpenAI
+        import base64 as b64
+        client = OpenAI(api_key=api_key)
+        with open(file_path, "rb") as f:
+            image_data = b64.b64encode(f.read()).decode("utf-8")
+        ext = file_path.rsplit(".", 1)[-1].lower()
+        mime_map = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png", "webp": "image/webp"}
+        mime_type = mime_map.get(ext, "image/jpeg")
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": "Ты — OCR-ассистент. Извлеки ВЕСЬ текст с изображения максимально точно. Сохраняй структуру: заголовки, списки, абзацы. Если на изображении схема или диаграмма — опиши её текстом. Если текст рукописный — расшифруй максимально точно. Отвечай ТОЛЬКО извлечённым текстом, без комментариев."},
+                {"role": "user", "content": [
+                    {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{image_data}", "detail": "high"}},
+                    {"type": "text", "text": "Извлеки весь текст с этого изображения."}
+                ]}
+            ],
+            max_tokens=4096
+        )
+        extracted = response.choices[0].message.content.strip()
+        if not extracted or len(extracted) < 20:
+            return None
+        return extracted
+    except Exception as e:
+        logging.error(f"Image OCR error: {e}")
+        return None
+
 async def update_user_profile(user, generation_type: str = None):
     try:
         user_email = f"{user.username or f'user{user.id}'}@telegram.io"
@@ -354,6 +795,7 @@ async def set_main_menu(bot_instance: Bot):
     await bot_instance.set_my_commands([
         BotCommand(command='/start', description='Начало работы'),
         BotCommand(command='/create', description='Создать курс пошагово'),
+        BotCommand(command='/buy', description='Купить кредиты'),
         BotCommand(command='/profile', description='Мой профиль'),
         BotCommand(command='/mytests', description='Мои тесты'),
         BotCommand(command='/help', description='Помощь'),
@@ -1594,6 +2036,60 @@ async def cmd_pay_partner(message: Message, command: CommandObject):
 # ============================================
 # ЗАПУСК БОТА
 # ============================================
+
+
+
+@router.message(F.photo)
+async def handle_photo(message: Message):
+    """Обработка фото: извлечение текста через Vision -> генерация теста"""
+    telegram_id = message.from_user.id
+    credits = await ensure_user_credits(telegram_id, message.from_user.username)
+    await update_user_profile(message.from_user)
+    user_email = get_user_email(message)
+    credits = await asyncio.to_thread(get_credits, user_email)
+    if credits < 1:
+        await message.answer("\u274c Недостаточно кредитов!", reply_markup=create_web_keyboard())
+        return
+    photo = message.photo[-1]
+    if photo.file_size and photo.file_size > MAX_FILE_SIZE_MB * 1024 * 1024:
+        await message.answer(f"\u274c Файл слишком большой! Максимум {MAX_FILE_SIZE_MB}MB")
+        return
+    status_msg = await message.answer("\U0001f4f8 Фото получено! Обрабатываю...", parse_mode="HTML")
+    file_path = f"temp_{telegram_id}_{photo.file_id[:8]}.jpg"
+    try:
+        await status_msg.edit_text("\U0001f4e5 Скачиваю изображение...", parse_mode="HTML")
+        file = await bot.get_file(photo.file_id)
+        await bot.download_file(file.file_path, file_path)
+        await status_msg.edit_text("\U0001f50d Распознаю текст на изображении...", parse_mode="HTML")
+        text = await asyncio.to_thread(extract_text_from_image, file_path, OPENAI_API_KEY)
+        if not text:
+            await status_msg.edit_text("\u274c Не удалось извлечь текст из изображения.\n\n\U0001f4a1 Советы:\n\u2022 Убедитесь, что текст на фото читаемый\n\u2022 Фото не размытое и хорошо освещено\n\u2022 На изображении есть достаточно текста для теста")
+            return
+        await status_msg.edit_text("\U0001f9e0 Генерирую тест...", parse_mode="HTML")
+        quiz_data = await asyncio.to_thread(generate_quiz_struct, text, 5, "medium", "Russian")
+        if not quiz_data:
+            await status_msg.edit_text("\u274c Не удалось сгенерировать тест. Попробуйте другое изображение.")
+            return
+        questions_json = [{"question": q.scenario, "options": q.options, "correct_option_id": q.correct_option_id, "explanation": q.explanation} for q in quiz_data.questions]
+        caption = message.caption or ""
+        time_str = datetime.now().strftime("%d.%m %H:%M")
+        test_title = caption[:50] if caption else f"\U0001f4f8 Фото-тест {time_str}"
+        test_id = await asyncio.to_thread(save_quiz, user_email, test_title, questions_json, getattr(quiz_data, "hints", []))
+        await update_user_profile(message.from_user, generation_type="photo")
+        await asyncio.to_thread(deduct_credit, user_email, 1)
+        await status_msg.edit_text(f"\u2705 <b>Тест готов!</b>\n\n\U0001f4dd {len(questions_json)} вопросов\n\U0001f4f8 Источник: фото", parse_mode="HTML", reply_markup=create_web_keyboard(test_id))
+        for i, q in enumerate(quiz_data.questions, 1):
+            try:
+                await bot.send_poll(chat_id=message.chat.id, question=f"{i}. {q.scenario[:250]}", options=[opt[:95] for opt in q.options], type="quiz", correct_option_id=q.correct_option_id, explanation=q.explanation[:195] if q.explanation else None, is_anonymous=False)
+                await asyncio.sleep(0.3)
+            except Exception as e:
+                logging.error(f"Poll error: {e}")
+    except Exception as e:
+        logging.error(f"Photo processing error: {e}")
+        await status_msg.edit_text(f"\u274c Ошибка: {str(e)[:100]}")
+    finally:
+        if os.path.exists(file_path):
+            os.remove(file_path)
 
 async def main():
     storage = MemoryStorage()
