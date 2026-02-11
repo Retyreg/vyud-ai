@@ -158,7 +158,7 @@ async def update_subscription(telegram_id: int, plan_id: str):
         supabase.table('users_credits') \
             .update({
                 'tariff': plan_id,
-                'subscription_expires_at': expires_at.isoformat()
+                'subscription_expires': expires_at.isoformat()
             }) \
             .eq('telegram_id', telegram_id) \
             .execute()
@@ -252,14 +252,14 @@ async def cmd_buy(message: Message):
     # Получаем текущий баланс
     telegram_id = message.from_user.id
     response = supabase.table('users_credits') \
-        .select('credits, tariff, subscription_expires_at') \
+        .select('credits, tariff, subscription_expires') \
         .eq('telegram_id', telegram_id) \
         .execute()
 
     if response.data:
         credits = response.data[0]['credits']
         tariff = response.data[0].get('tariff', 'free')
-        sub_expires = response.data[0].get('subscription_expires_at')
+        sub_expires = response.data[0].get('subscription_expires')
     else:
         credits = 0
         tariff = 'free'
