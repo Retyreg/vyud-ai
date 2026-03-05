@@ -17,6 +17,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from supabase import create_client
 from datetime import datetime, timedelta
+import random
 
 try:
     from logic import transcribe_for_bot as transcribe_audio, generate_quiz_ai as generate_quiz_struct, process_file_to_text_bot as process_file_to_text
@@ -938,6 +939,160 @@ async def send_course_preview(
 # ГЕНЕРАЦИЯ ТЕСТА (общая логика)
 # ============================================
 
+
+# ============================================
+# ПОДДЕРЖКА 4 ТИПОВ ВОПРОСОВ
+# ============================================
+
+def build_questions_json(quiz_data) -> list:
+    """
+    Формирует JSON с поддержкой 4 типов вопросов.
+    Добавляет question_type, correct_option_ids, matching_pairs.
+    """
+    questions_json = []
+    
+    for q in quiz_data.questions:
+        q_type = getattr(q, 'question_type', 'single_choice')
+        
+        question_dict = {
+            "question": q.scenario,
+            "options": q.options,
+            "correct_option_id": q.correct_option_id,
+            "explanation": q.explanation,
+            "question_type": q_type
+        }
+        
+        # Для multiple_choice добавляем correct_option_ids
+        if q_type == 'multiple_choice':
+            correct_ids = getattr(q, 'correct_option_ids', [q.correct_option_id])
+            question_dict["correct_option_ids"] = correct_ids
+        
+        # Для matching добавляем matching_pairs
+        elif q_type == 'matching':
+            pairs = getattr(q, 'matching_pairs', None)
+            if pairs:
+                question_dict["matching_pairs"] = pairs
+        
+        questions_json.append(question_dict)
+    
+    return questions_json
+
+
+
+
+def escape_markdown_v2(text: str) -> str:
+    """Экранирует спецсимволы для MarkdownV2."""
+    special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+    for char in special_chars:
+        text = text.replace(char, f'\\{char}')
+    return text
+
+async def send_quiz_to_chat(chat_id: int, questions: list):
+    """
+    Отправляет вопросы в зависимости от типа:
+    - single_choice/true_false → обычный quiz poll
+    - multiple_choice → poll с allows_multiple_answers + spoiler с ответами
+    - matching → текст с перемешанными парами + spoiler с правильными сопоставлениями
+    """
+    
+    for i, q_dict in enumerate(questions, 1):
+        q_type = q_dict.get('question_type', 'single_choice')
+        
+        try:
+            if q_type in ('single_choice', 'true_false'):
+                # Обычный quiz poll
+                await bot.send_poll(
+                    chat_id=chat_id,
+                    question=f"{i}. {q_dict['question'][:250]}",
+                    options=[opt[:95] for opt in q_dict['options']],
+                    type="quiz",
+                    correct_option_id=q_dict['correct_option_id'],
+                    explanation=q_dict['explanation'][:195] if q_dict.get('explanation') else None,
+                    is_anonymous=False
+                )
+            
+            elif q_type == 'multiple_choice':
+                # Poll с множественным выбором
+                correct_ids = q_dict.get('correct_option_ids', [q_dict['correct_option_id']])
+                correct_options = [q_dict['options'][idx] for idx in correct_ids if idx < len(q_dict['options'])]
+                
+                # Отправляем обычный poll с allows_multiple_answers
+                poll_msg = await bot.send_poll(
+                    chat_id=chat_id,
+                    question=f"{i}. {q_dict['question'][:250]}",
+                    options=[opt[:95] for opt in q_dict['options']],
+                    type="regular",  # Не quiz, чтобы можно было allows_multiple_answers
+                    allows_multiple_answers=True,
+                    is_anonymous=False
+                )
+                
+                # Сразу отправляем ответ в spoiler
+                answer_text = f"✅ Правильные ответы: {', '.join(correct_options)}"
+                if q_dict.get('explanation'):
+                    answer_text += f"\n\n💡 {q_dict['explanation']}"
+                
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text=f"||{answer_text}||",
+                    parse_mode=None
+                )
+            
+            elif q_type == 'matching':
+                # Matching - отправляем текст с перемешанными парами
+                pairs = q_dict.get('matching_pairs', [])
+                if not pairs:
+                    continue
+                
+                # Формируем левую и правую части
+                left_items = [f"{idx+1}. {p['left']}" for idx, p in enumerate(pairs)]
+                right_items = [p['right'] for p in pairs]
+                
+                # Перемешиваем правую часть
+                shuffled_right = right_items.copy()
+                random.shuffle(shuffled_right)
+                right_labeled = [f"{chr(65+idx)}. {item}" for idx, item in enumerate(shuffled_right)]
+                
+                # Формируем правильные ответы
+                correct_answers = []
+                for idx, pair in enumerate(pairs):
+                    letter_idx = shuffled_right.index(pair['right'])
+                    correct_answers.append(f"{idx+1} → {chr(65+letter_idx)}")
+                
+                matching_text = (
+                    f"**{i}. {escape_markdown_v2(q_dict['question'])}**\n\n"
+                    f"**Левая колонка:**\n" + "\n".join(left_items) + "\n\n"
+                    f"**Правая колонка:**\n" + "\n".join(right_labeled)
+                )
+                
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text=matching_text,
+                    parse_mode=None
+                )
+                
+                # Отправляем ответы в spoiler
+                answer_text = f"✅ Правильные пары:\n" + "\n".join(correct_answers)
+                if q_dict.get('explanation'):
+                    answer_text += f"\n\n💡 {q_dict['explanation']}"
+                
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text=f"||{answer_text}||",
+                    parse_mode=None
+                )
+            
+            await asyncio.sleep(0.3)
+            
+        except Exception as e:
+            logging.error(f"Error sending question {i} (type={q_type}): {e}")
+            # Fallback на обычный текст
+            await bot.send_message(
+                chat_id=chat_id,
+                text=f"{i}. {q_dict['question']}\n\nОтветы: {', '.join(q_dict['options'])}",
+                parse_mode=None
+            )
+
+
 async def generate_and_send_quiz(
     message: Message,
     text: str,
@@ -969,12 +1124,8 @@ async def generate_and_send_quiz(
             await status_msg.edit_text("❌ Не удалось сгенерировать тест. Попробуйте другой файл.")
             return
         
-        questions_json = [{
-            "question": q.scenario,
-            "options": q.options,
-            "correct_option_id": q.correct_option_id,
-            "explanation": q.explanation
-        } for q in quiz_data.questions]
+        # Используем новую функцию build_questions_json
+        questions_json = build_questions_json(quiz_data)
         
         test_id = await asyncio.to_thread(
             save_quiz, user_email, title, questions_json,
@@ -997,31 +1148,14 @@ async def generate_and_send_quiz(
             difficulty=difficulty
         )
         
-        # Отправляем поллы
-        for i, q in enumerate(quiz_data.questions, 1):
-            try:
-                await bot.send_poll(
-                    chat_id=message.chat.id,
-                    question=f"{i}. {q.scenario[:250]}",
-                    options=[opt[:95] for opt in q.options],
-                    type="quiz",
-                    correct_option_id=q.correct_option_id,
-                    explanation=q.explanation[:195] if q.explanation else None,
-                    is_anonymous=False
-                )
-                await asyncio.sleep(0.3)
-            except Exception as e:
-                logging.error(f"Poll error: {e}")
+        # Используем новую функцию send_quiz_to_chat вместо цикла send_poll
+        await send_quiz_to_chat(message.chat.id, questions_json)
         
     except Exception as e:
         logging.error(f"Error in generate_and_send_quiz: {e}")
         if status_msg:
             await status_msg.edit_text(f"❌ Ошибка: {str(e)[:100]}")
 
-
-# ============================================
-# ОБРАБОТКА МЕДИА (аудио/видео — фоновый процесс)
-# ============================================
 
 async def process_media_background(
     message: Message,
@@ -2070,7 +2204,7 @@ async def handle_photo(message: Message):
         if not quiz_data:
             await status_msg.edit_text("\u274c Не удалось сгенерировать тест. Попробуйте другое изображение.")
             return
-        questions_json = [{"question": q.scenario, "options": q.options, "correct_option_id": q.correct_option_id, "explanation": q.explanation} for q in quiz_data.questions]
+        questions_json = build_questions_json(quiz_data)
         caption = message.caption or ""
         time_str = datetime.now().strftime("%d.%m %H:%M")
         test_title = caption[:50] if caption else f"\U0001f4f8 Фото-тест {time_str}"
@@ -2078,12 +2212,7 @@ async def handle_photo(message: Message):
         await update_user_profile(message.from_user, generation_type="photo")
         await asyncio.to_thread(deduct_credit, user_email, 1)
         await status_msg.edit_text(f"\u2705 <b>Тест готов!</b>\n\n\U0001f4dd {len(questions_json)} вопросов\n\U0001f4f8 Источник: фото", parse_mode="HTML", reply_markup=create_web_keyboard(test_id))
-        for i, q in enumerate(quiz_data.questions, 1):
-            try:
-                await bot.send_poll(chat_id=message.chat.id, question=f"{i}. {q.scenario[:250]}", options=[opt[:95] for opt in q.options], type="quiz", correct_option_id=q.correct_option_id, explanation=q.explanation[:195] if q.explanation else None, is_anonymous=False)
-                await asyncio.sleep(0.3)
-            except Exception as e:
-                logging.error(f"Poll error: {e}")
+        await send_quiz_to_chat(message.chat.id, questions_json)
     except Exception as e:
         logging.error(f"Photo processing error: {e}")
         await status_msg.edit_text(f"\u274c Ошибка: {str(e)[:100]}")

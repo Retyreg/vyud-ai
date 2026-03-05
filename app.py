@@ -1,5 +1,6 @@
 import streamlit as st
 import logic
+import scorm_export
 import auth
 import os
 import pandas as pd
@@ -128,15 +129,29 @@ else:
                             st.session_state["done"] = False
                             st.session_state["score"] = 0
                             
-                            questions_json = [
-                                {
+                            questions_json = []
+                            for q in st.session_state["q"].questions:
+                                q_type = getattr(q, 'question_type', 'single_choice')
+                                q_dict = {
                                     "question": q.scenario,
                                     "options": q.options,
                                     "correct_option_id": q.correct_option_id,
-                                    "explanation": q.explanation
+                                    "explanation": q.explanation,
+                                    "question_type": q_type
                                 }
-                                for q in st.session_state["q"].questions
-                            ]
+                                
+                                # Для multiple_choice добавляем correct_option_ids
+                                if q_type == 'multiple_choice':
+                                    correct_ids = getattr(q, 'correct_option_ids', [q.correct_option_id])
+                                    q_dict["correct_option_ids"] = correct_ids
+                                
+                                # Для matching добавляем matching_pairs
+                                elif q_type == 'matching':
+                                    pairs = getattr(q, 'matching_pairs', None)
+                                    if pairs:
+                                        q_dict["matching_pairs"] = pairs
+                                
+                                questions_json.append(q_dict)
                             test_id = auth.save_quiz(
                                 st.session_state["user"],
                                 uf.name,
@@ -158,11 +173,108 @@ else:
             q = st.session_state["q"]
             if not st.session_state.get("done"):
                 with st.form("qz"):
-                    s = 0; ans = {}
+                    s = 0
+                    ans = {}
+                    quiz_id = st.session_state.get("current_test_id", "default")
+                    
                     for i, qu in enumerate(q.questions):
+                        # Определяем тип вопроса (backward compatible)
+                        q_type = getattr(qu, 'question_type', 'single_choice')
+                        
+                        # Бейдж типа вопроса
+                        type_badges = {
+                            'single_choice': '🔘 Один ответ',
+                            'multiple_choice': '☑️ Несколько ответов',
+                            'true_false': '✅❌ Верно/Неверно',
+                            'matching': '🔗 Соответствие'
+                        }
+                        badge = type_badges.get(q_type, '🔘 Один ответ')
+                        
+                        st.markdown(f"<span style='background:#e6f3ff;padding:4px 8px;border-radius:4px;font-size:12px'>{badge}</span>", unsafe_allow_html=True)
                         st.markdown(f"**{i+1}. {qu.scenario}**")
-                        ans[i] = st.radio("Ответ:", qu.options, key=f"q{i}")
+                        
+                        # Рендеринг в зависимости от типа
+                        if q_type == 'single_choice':
+                            ans[i] = st.radio("Выберите ответ:", qu.options, key=f"q_{quiz_id}_{i}_single")
+                        
+                        elif q_type == 'true_false':
+                            ans[i] = st.radio("Выберите ответ:", qu.options, key=f"q_{quiz_id}_{i}_tf")
+                        
+                        elif q_type == 'multiple_choice':
+                            st.write("Выберите все правильные ответы:")
+                            selected = []
+                            for opt_idx, opt in enumerate(qu.options):
+                                if st.checkbox(opt, key=f"q_{quiz_id}_{i}_cb_{opt_idx}"):
+                                    selected.append(opt_idx)
+                            ans[i] = selected  # Сохраняем индексы
+                        
+                        elif q_type == 'matching':
+                            pairs = getattr(qu, 'matching_pairs', [])
+                            if pairs:
+                                st.write("Сопоставьте пары:")
+                                col1, col2 = st.columns(2)
+                                
+                                with col1:
+                                    st.markdown("**Левая часть:**")
+                                    for idx, pair in enumerate(pairs):
+                                        st.write(f"{idx+1}. {pair['left']}")
+                                
+                                with col2:
+                                    st.markdown("**Правая часть:**")
+                                    # Перемешанные варианты
+                                    right_options = [p['right'] for p in pairs]
+                                    
+                                selected_pairs = {}
+                                for idx, pair in enumerate(pairs):
+                                    selected = st.selectbox(
+                                        f"{idx+1} →",
+                                        right_options,
+                                        key=f"q_{quiz_id}_{i}_match_{idx}"
+                                    )
+                                    selected_pairs[idx] = selected
+                                
+                                ans[i] = selected_pairs
+                            else:
+                                st.warning("Нет данных для сопоставления")
+                                ans[i] = {}
+                        
                         st.divider()
+                    
+                    if st.form_submit_button("Завершить"):
+                        s = 0
+                        for i, qu in enumerate(q.questions):
+                            q_type = getattr(qu, 'question_type', 'single_choice')
+                            
+                            if q_type == 'single_choice' or q_type == 'true_false':
+                                # Проверка одного ответа
+                                if ans.get(i) == qu.options[qu.correct_option_id]:
+                                    s += 1
+                            
+                            elif q_type == 'multiple_choice':
+                                # Проверка множественного выбора
+                                correct_ids = getattr(qu, 'correct_option_ids', [qu.correct_option_id])
+                                selected_ids = ans.get(i, [])
+                                if set(selected_ids) == set(correct_ids):
+                                    s += 1
+                            
+                            elif q_type == 'matching':
+                                # Проверка соответствий
+                                pairs = getattr(qu, 'matching_pairs', [])
+                                selected_pairs = ans.get(i, {})
+                                all_correct = True
+                                for idx, pair in enumerate(pairs):
+                                    if selected_pairs.get(idx) != pair['right']:
+                                        all_correct = False
+                                        break
+                                if all_correct and len(selected_pairs) == len(pairs):
+                                    s += 1
+                        
+                        st.session_state["score"] = s
+                        if s >= len(q.questions)*0.7:
+                            st.session_state["done"] = True
+                            st.rerun()
+                        else:
+                            st.error(f"Не сдал: {s}/{len(q.questions)}")
                     if st.form_submit_button("Завершить"):
                         for i, qu in enumerate(q.questions):
                             if ans.get(i) == qu.options[qu.correct_option_id]: s+=1
@@ -172,21 +284,82 @@ else:
             else:
                 st.success(f"Сдано! Результат: {st.session_state['score']}")
                 st.subheader("📜 Сертификат / Экспорт")
-                c_n, c_c = st.columns(2)
+                
+                # Четыре колонки: ФИО | Курс | Язык | Тема
+                c_n, c_c, c_l, c_t = st.columns([2, 2, 1, 1])
                 with c_n: 
                     d_n = st.session_state["user"].split("@")[0]
                     name = st.text_input("ФИО Студента", value=d_n, key="cert_name")
                 with c_c: 
                     d_c = st.session_state["fn"].split(".")[0]
                     course = st.text_input("Название курса", value=d_c, key="cert_course")
+                with c_l:
+                    cert_lang = st.selectbox(
+                        "Язык",
+                        options=["auto", "ru", "en"],
+                        format_func=lambda x: {"auto": "🔄 Авто", "ru": "🇷🇺 RU", "en": "🇬🇧 EN"}[x],
+                        key="cert_lang"
+                    )
+                with c_t:
+                    cert_theme = st.selectbox(
+                        "Тема",
+                        options=["dark", "light"],
+                        format_func=lambda x: {"dark": "🌙 Тёмная", "light": "☀️ Светлая"}[x],
+                        key="cert_theme"
+                    )
                 
                 try:
-                    pdf = logic.create_certificate(name, course, logo_file, signature_file)
+                    # Передаём язык (None для авто) и тему
+                    lang_param = None if cert_lang == "auto" else cert_lang
+                    pdf = logic.create_certificate(name, course, logo_file, signature_file, lang=lang_param, theme=cert_theme)
                     st.download_button("📥 Скачать Сертификат (PDF)", pdf, "cert.pdf", "application/pdf", type="primary", key="download_cert")
                 except Exception as e: st.error(f"Ошибка PDF: {e}")
                 
                 try: st.download_button("🌐 Скачать Тест (HTML Offline)", logic.create_html_quiz(q, st.session_state["fn"]), "quiz.html", "text/html", key="download_html")
                 except: pass
+
+                # SCORM 1.2 Export
+                try:
+                    st.markdown("---")
+                    st.subheader("📦 SCORM 1.2 Экспорт")
+                    st.write("Загрузите тест в любую LMS-систему (Moodle, iSpring, СДО)")
+                    
+                    # Собираем questions_json из session_state
+                    questions_json = []
+                    for q_item in q.questions:
+                        q_type = getattr(q_item, 'question_type', 'single_choice')
+                        q_dict = {
+                            "question": q_item.scenario,
+                            "options": q_item.options,
+                            "correct_option_id": q_item.correct_option_id,
+                            "explanation": q_item.explanation,
+                            "question_type": q_type
+                        }
+                        
+                        if q_type == 'multiple_choice':
+                            correct_ids = getattr(q_item, 'correct_option_ids', [q_item.correct_option_id])
+                            q_dict["correct_option_ids"] = correct_ids
+                        
+                        elif q_type == 'matching':
+                            pairs = getattr(q_item, 'matching_pairs', None)
+                            if pairs:
+                                q_dict["matching_pairs"] = pairs
+                        
+                        questions_json.append(q_dict)
+                    
+                    scorm_title = st.session_state.get("fn", "VYUD_Quiz").split(".")[0]
+                    scorm_zip = scorm_export.generate_scorm_package(scorm_title, questions_json)
+                    
+                    st.download_button(
+                        label="💾 Скачать SCORM (.zip)",
+                        data=scorm_zip,
+                        file_name=f"{scorm_title}_SCORM.zip",
+                        mime="application/zip",
+                        key="download_scorm",
+                        type="primary"
+                    )
+                except Exception as e:
+                    st.error(f"Ошибка SCORM-экспорта: {e}")
 
                 if st.button("Заново", key="restart_btn"): st.session_state["done"]=False; st.rerun()
 
@@ -238,14 +411,57 @@ else:
                     st.write(f"**Вопросов:** {len(quiz.get(questions, []))}")
                     
                     for i, q in enumerate(quiz.get("questions", []), 1):
-                        st.markdown(f"**{i}. {q.get(question)}**")
-                        for opt_idx, opt in enumerate(q.get("options", [])):
-                            if opt_idx == q.get("correct_option_id"):
-                                st.success(f"✅ {opt}")
+                        # Определяем тип вопроса (backward compatible)
+                        q_type = q.get("question_type", "single_choice")
+                        
+                        # Бейдж типа вопроса
+                        type_badges = {
+                            'single_choice': '🔘 Один ответ',
+                            'multiple_choice': '☑️ Несколько ответов',
+                            'true_false': '✅❌ Верно/Неверно',
+                            'matching': '🔗 Соответствие'
+                        }
+                        badge = type_badges.get(q_type, '🔘 Один ответ')
+                        
+                        st.markdown(f"<span style='background:#e6f3ff;padding:4px 8px;border-radius:4px;font-size:12px'>{badge}</span>", unsafe_allow_html=True)
+                        st.markdown(f"**{i}. {q.get('question')}**")
+                        
+                        # Отображение в зависимости от типа
+                        if q_type == 'single_choice' or q_type == 'true_false':
+                            # Один правильный ответ
+                            for opt_idx, opt in enumerate(q.get("options", [])):
+                                if opt_idx == q.get("correct_option_id"):
+                                    st.success(f"✅ {opt}")
+                                else:
+                                    st.write(f"   {opt}")
+                        
+                        elif q_type == 'multiple_choice':
+                            # Несколько правильных ответов
+                            correct_ids = q.get("correct_option_ids", [q.get("correct_option_id")])
+                            for opt_idx, opt in enumerate(q.get("options", [])):
+                                if opt_idx in correct_ids:
+                                    st.success(f"✅ {opt}")
+                                else:
+                                    st.write(f"   {opt}")
+                        
+                        elif q_type == 'matching':
+                            # Показываем пары соответствий
+                            pairs = q.get("matching_pairs", [])
+                            if pairs:
+                                col1, col2 = st.columns(2)
+                                with col1:
+                                    st.markdown("**Левая часть:**")
+                                    for idx, pair in enumerate(pairs):
+                                        st.write(f"{idx+1}. {pair['left']}")
+                                with col2:
+                                    st.markdown("**Правая часть:**")
+                                    for idx, pair in enumerate(pairs):
+                                        st.success(f"→ {pair['right']}")
                             else:
-                                st.write(f"   {opt}")
+                                st.write("Нет данных для соответствия")
+                        
                         if q.get("explanation"):
-                            st.info(f"💡 {q.get(explanation)}")
+                            st.info(f"💡 {q.get('explanation')}")
                         st.divider()
                     
                     if st.button("◀️ Назад к списку", key="back_to_list"):

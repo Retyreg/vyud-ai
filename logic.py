@@ -19,12 +19,81 @@ from reportlab.pdfbase.ttfonts import TTFont
 MODEL_GPT = "gpt-4o"
 MODEL_WHISPER = "whisper-1"
 
+# === РЕГИСТРАЦИЯ ШРИФТА С КИРИЛЛИЦЕЙ ===
+FONT_PATHS = [
+    "DejaVuSans.ttf",
+    "assets/DejaVuSans.ttf",
+    "/var/www/vyud_app/DejaVuSans.ttf",
+    "/var/www/vyud_app/assets/DejaVuSans.ttf",
+    os.path.join(os.path.dirname(__file__), "DejaVuSans.ttf"),
+    os.path.join(os.path.dirname(__file__), "assets", "DejaVuSans.ttf"),
+]
+
+CERT_FONT = "DejaVuSans"
+_font_registered = False
+
+for _fp in FONT_PATHS:
+    if os.path.exists(_fp):
+        try:
+            pdfmetrics.registerFont(TTFont(CERT_FONT, _fp))
+            _font_registered = True
+            print(f"✅ Шрифт зарегистрирован: {_fp}")
+            break
+        except Exception as e:
+            print(f"⚠️ Ошибка регистрации шрифта {_fp}: {e}")
+
+if not _font_registered:
+    print("⚠️ DejaVuSans не найден, кириллица может не работать!")
+    CERT_FONT = "Helvetica"
+
+# === ШАБЛОНЫ ТЕКСТОВ ДЛЯ СЕРТИФИКАТА ===
+CERT_TEMPLATES = {
+    "en": {
+        "badge": "VYUD AI CERTIFIED",
+        "title": "CERTIFICATE",
+        "subtitle": "OF COMPLETION",
+        "certifies": "This certifies that",
+        "completed": "has successfully completed",
+        "issued": "Issued:",
+        "cert_id": "Certificate ID:",
+        "signature": "Authorized Signature",
+    },
+    "ru": {
+        "badge": "СЕРТИФИКАТ VYUD AI",
+        "title": "СЕРТИФИКАТ",
+        "subtitle": "О ПРОХОЖДЕНИИ КУРСА",
+        "certifies": "Настоящим подтверждается, что",
+        "completed": "успешно завершил(а) курс",
+        "issued": "Выдан:",
+        "cert_id": "Номер:",
+        "signature": "Подпись",
+    }
+}
+
+MONTHS_RU = {
+    1: "января", 2: "февраля", 3: "марта", 4: "апреля",
+    5: "мая", 6: "июня", 7: "июля", 8: "августа",
+    9: "сентября", 10: "октября", 11: "ноября", 12: "декабря"
+}
+
+
+def detect_language(text: str) -> str:
+    """Определяет язык по наличию кириллицы."""
+    for char in text:
+        if '\u0400' <= char <= '\u04FF':
+            return "ru"
+    return "en"
+
+
 class QuizQuestion:
-    def __init__(self, scenario, options, correct_option_id, explanation=""):
+    def __init__(self, scenario, options, correct_option_id, explanation="", question_type="single_choice", correct_option_ids=None, matching_pairs=None):
         self.scenario = scenario
         self.options = options
         self.correct_option_id = correct_option_id
         self.explanation = explanation
+        self.question_type = question_type if question_type else "single_choice"
+        self.correct_option_ids = correct_option_ids if correct_option_ids else [correct_option_id]
+        self.matching_pairs = matching_pairs if matching_pairs else None
 
 class Quiz:
     def __init__(self, questions):
@@ -168,12 +237,69 @@ def transcribe_audio_video(uploaded_file, client, status_container):
         return ""
 
 # --- 2. ГЕНЕРАЦИЯ ТЕСТА ---
+def _parse_quiz_response(data: dict) -> list:
+    """
+    Парсит ответ AI в новом формате с поддержкой 4 типов вопросов.
+    Fallback на старый формат для совместимости.
+    """
+    questions = []
+    
+    for q in data.get('questions', []):
+        q_type = q.get('question_type', 'single_choice')
+        
+        if q_type == 'matching':
+            # Matching: pairs + scrambled options
+            pairs = q.get('matching_pairs', [])
+            if not pairs or len(pairs) < 2:
+                continue  # Пропускаем невалидные
+            
+            # Генерируем options из pairs
+            options = [p['right'] for p in pairs]
+            
+            questions.append(QuizQuestion(
+                scenario=q.get('scenario', 'Question?'),
+                options=options,
+                correct_option_id=0,  # Не используется для matching
+                explanation=q.get('explanation', ''),
+                question_type='matching',
+                matching_pairs=pairs
+            ))
+        
+        elif q_type == 'multiple_choice':
+            # Multiple choice: несколько правильных ответов
+            correct_ids = q.get('correct_option_ids', [0])
+            if not isinstance(correct_ids, list):
+                correct_ids = [correct_ids]
+            
+            questions.append(QuizQuestion(
+                scenario=q.get('scenario', 'Question?'),
+                options=q.get('options', ['A', 'B', 'C', 'D']),
+                correct_option_id=correct_ids[0],  # Первый для совместимости
+                explanation=q.get('explanation', ''),
+                question_type='multiple_choice',
+                correct_option_ids=correct_ids
+            ))
+        
+        else:
+            # single_choice или true_false — классический формат
+            questions.append(QuizQuestion(
+                scenario=q.get('scenario', 'Question?'),
+                options=q.get('options', ['A', 'B', 'C', 'D']),
+                correct_option_id=q.get('correct_option_id', 0),
+                explanation=q.get('explanation', ''),
+                question_type=q_type
+            ))
+    
+    return questions
+
+
 def generate_quiz_ai(text, num_questions, difficulty, language):
     client = get_client(st.secrets["OPENAI_API_KEY"])
     if not text: return Quiz([])
     
+    # Новый промпт с поддержкой 4 типов вопросов
     prompt = f"""
-You are an expert quiz creator. Create an engaging quiz based on the following text.
+You are an expert quiz creator. Create an engaging quiz with MULTIPLE QUESTION TYPES based on the following text.
 
 TEXT:
 {text[:25000]}
@@ -182,21 +308,57 @@ REQUIREMENTS:
 - Language: {language}
 - Difficulty: {difficulty}
 - Number of questions: {num_questions}
-- Each question must have exactly 4 options
-- Include a brief explanation (1-2 sentences) for why the correct answer is right
+- Use 4 types of questions with the following distribution:
+  * single_choice (~40%): Classic quiz with 4 options, 1 correct answer
+  * multiple_choice (~25%): 4+ options, 2-3 correct answers
+  * true_false (~20%): Only 2 options (True/False or Yes/No)
+  * matching (~15%): Match 3-5 pairs of related items
+- Include a brief explanation (1-2 sentences) for each question
 
 OUTPUT FORMAT (strict JSON):
 {{
   "questions": [
     {{
-      "scenario": "Question text here?",
+      "question_type": "single_choice",
+      "scenario": "Question text?",
       "options": ["Option A", "Option B", "Option C", "Option D"],
       "correct_option_id": 0,
-      "explanation": "Brief explanation why this answer is correct."
+      "explanation": "Why this is correct."
+    }},
+    {{
+      "question_type": "multiple_choice",
+      "scenario": "Select ALL correct answers:",
+      "options": ["Option A", "Option B", "Option C", "Option D"],
+      "correct_option_ids": [0, 2],
+      "explanation": "Why these are correct."
+    }},
+    {{
+      "question_type": "true_false",
+      "scenario": "Statement to evaluate",
+      "options": ["True", "False"],
+      "correct_option_id": 0,
+      "explanation": "Why this is true/false."
+    }},
+    {{
+      "question_type": "matching",
+      "scenario": "Match the following pairs:",
+      "matching_pairs": [
+        {{"left": "Term 1", "right": "Definition 1"}},
+        {{"left": "Term 2", "right": "Definition 2"}},
+        {{"left": "Term 3", "right": "Definition 3"}}
+      ],
+      "explanation": "Brief explanation of the relationships."
     }}
   ]
 }}
+
+IMPORTANT:
+- Mix question types naturally throughout the quiz
+- For matching questions: provide 3-5 pairs minimum
+- For multiple_choice: ensure 2-3 options are correct, not just 1
+- For true_false: make statements clear and unambiguous
 """
+    
     try:
         response = client.chat.completions.create(
             model=MODEL_GPT,
@@ -204,8 +366,20 @@ OUTPUT FORMAT (strict JSON):
             response_format={"type": "json_object"}
         )
         data = json.loads(response.choices[0].message.content)
-        return Quiz([QuizQuestion(q['scenario'], q['options'], q['correct_option_id'], q.get('explanation', '')) for q in data['questions']])
-    except Exception as e: return Quiz([QuizQuestion(f"Error: {e}", ["OK"], 0)])
+        
+        # Используем новый парсер
+        questions = _parse_quiz_response(data)
+        
+        if not questions:
+            # Fallback на старый формат
+            questions = [QuizQuestion(q['scenario'], q['options'], q['correct_option_id'], q.get('explanation', '')) 
+                        for q in data.get('questions', [])]
+        
+        return Quiz(questions)
+        
+    except Exception as e:
+        logging.error(f"Quiz generation error: {e}")
+        return Quiz([QuizQuestion(f"Error: {e}", ["OK"], 0)])
 
 def generate_methodologist_hints(text, language):
     if not text: return "Нет текста."
@@ -233,7 +407,29 @@ def create_html_quiz(quiz_obj, filename):
     """
     return html.encode('utf-8')
 
+# === ЦВЕТОВЫЕ СХЕМЫ ДЛЯ СЕРТИФИКАТА ===
+CERT_THEMES = {
+    "dark": {
+        "bg": "#0E1117",
+        "primary": "#00D4FF",      # Неоновый голубой
+        "secondary": "#7D3CFF",    # Фиолетовый
+        "text": "#FAFAFA",         # Светлый текст
+        "muted": "#979797",        # Приглушённый
+        "remove_bg": "white"       # Удалять белый фон с логотипов
+    },
+    "light": {
+        "bg": "#FFFFFF",
+        "primary": "#0066CC",      # Синий
+        "secondary": "#6B21A8",    # Фиолетовый
+        "text": "#1A1A1A",         # Тёмный текст
+        "muted": "#666666",        # Приглушённый
+        "remove_bg": "black"       # Удалять чёрный фон с логотипов
+    }
+}
+
+
 def remove_white_background(img):
+    """Удаляет белый фон с изображения."""
     if img.mode != "RGBA":
         img = img.convert("RGBA")
     datas = img.getdata()
@@ -246,33 +442,92 @@ def remove_white_background(img):
     img.putdata(new_data)
     return img
 
-def create_certificate(student_name, course_name, logo_file=None, signature_file=None):
+
+def remove_black_background(img):
+    """Удаляет чёрный/тёмный фон с изображения."""
+    if img.mode != "RGBA":
+        img = img.convert("RGBA")
+    datas = img.getdata()
+    new_data = []
+    for item in datas:
+        if item[0] < 50 and item[1] < 50 and item[2] < 50:
+            new_data.append((0, 0, 0, 0))
+        else:
+            new_data.append(item)
+    img.putdata(new_data)
+    return img
+
+
+def process_image_for_theme(img, theme):
+    """Обрабатывает изображение в зависимости от темы."""
+    theme_config = CERT_THEMES.get(theme, CERT_THEMES["dark"])
+    if theme_config["remove_bg"] == "white":
+        return remove_white_background(img)
+    else:
+        return remove_black_background(img)
+
+
+def create_certificate(student_name, course_name, logo_file=None, signature_file=None, lang=None, theme="dark"):
+    """
+    Создаёт PDF-сертификат с поддержкой кириллицы, мультиязычности и тем.
+    
+    Args:
+        student_name: ФИО студента (поддерживает любой язык)
+        course_name: Название курса (поддерживает любой язык)
+        logo_file: Файл логотипа (опционально)
+        signature_file: Файл подписи (опционально)
+        lang: Язык сертификата ("ru"/"en"), None = автоопределение по тексту
+        theme: Тема оформления ("dark"/"light"), default = "dark"
+    
+    Returns:
+        bytes: PDF-файл сертификата
+    """
     from reportlab.lib.colors import HexColor
     from reportlab.lib.utils import ImageReader
     from PIL import Image
     from datetime import datetime
     import random
+    
+    # Автоопределение языка если не указан
+    if lang is None:
+        lang = detect_language(student_name + course_name)
+    
+    # Получаем шаблон текстов
+    t = CERT_TEMPLATES.get(lang, CERT_TEMPLATES["en"])
+    font = CERT_FONT
+    
+    # Получаем цветовую схему темы
+    th = CERT_THEMES.get(theme, CERT_THEMES["dark"])
+    
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=landscape(A4))
     width, height = landscape(A4)
-    bg = HexColor("#0E1117")
-    neon = HexColor("#00D4FF")
-    purple = HexColor("#7D3CFF")
-    light = HexColor("#FAFAFA")
-    muted = HexColor("#979797")
+    
+    # === ЦВЕТА ИЗ ТЕМЫ ===
+    bg = HexColor(th["bg"])
+    primary = HexColor(th["primary"])
+    secondary = HexColor(th["secondary"])
+    text_color = HexColor(th["text"])
+    muted = HexColor(th["muted"])
+    
+    # === ФОН ===
     c.setFillColor(bg)
     c.rect(0, 0, width, height, fill=True, stroke=False)
-    c.setStrokeColor(neon)
+    
+    # === РАМКИ ===
+    c.setStrokeColor(primary)
     c.setLineWidth(3)
     c.rect(25, 25, width-50, height-50)
-    c.setStrokeColor(purple)
+    c.setStrokeColor(secondary)
     c.setLineWidth(1)
     c.rect(35, 35, width-70, height-70)
+    
+    # === ЛОГОТИП ===
     if logo_file:
         try:
             logo_file.seek(0)
             img = Image.open(io.BytesIO(logo_file.getvalue()))
-            img = remove_white_background(img)
+            img = process_image_for_theme(img, theme)
             r = min(250/img.width, 120/img.height)
             nw, nh = int(img.width*r), int(img.height*r)
             buf = io.BytesIO()
@@ -280,35 +535,54 @@ def create_certificate(student_name, course_name, logo_file=None, signature_file
             buf.seek(0)
             c.drawImage(ImageReader(buf), 50, height-nh-50, width=nw, height=nh, mask="auto")
         except: pass
-    c.setFillColor(neon)
-    c.setFont("Helvetica-Bold", 12)
-    c.drawRightString(width-50, height-60, "VYUD AI CERTIFIED")
-    c.setFillColor(light)
-    c.setFont("Helvetica-Bold", 48)
-    c.drawCentredString(width/2, height-180, "CERTIFICATE")
-    c.setFillColor(neon)
-    c.setFont("Helvetica", 20)
-    c.drawCentredString(width/2, height-220, "OF COMPLETION")
-    c.setStrokeColor(purple)
+    
+    # === БЕЙДЖ ===
+    c.setFillColor(primary)
+    c.setFont(font, 12)
+    c.drawRightString(width-50, height-60, t["badge"])
+    
+    # === ЗАГОЛОВОК ===
+    c.setFillColor(text_color)
+    c.setFont(font, 48)
+    c.drawCentredString(width/2, height-180, t["title"])
+    
+    # === ПОДЗАГОЛОВОК ===
+    c.setFillColor(primary)
+    c.setFont(font, 20)
+    c.drawCentredString(width/2, height-220, t["subtitle"])
+    
+    # === РАЗДЕЛИТЕЛЬНАЯ ЛИНИЯ ===
+    c.setStrokeColor(secondary)
     c.setLineWidth(2)
     c.line(width/2-150, height-245, width/2+150, height-245)
+    
+    # === "Настоящим подтверждается" ===
     c.setFillColor(muted)
-    c.setFont("Helvetica", 14)
-    c.drawCentredString(width/2, height-280, "This certifies that")
-    c.setFillColor(light)
-    c.setFont("Helvetica-Bold", 36)
+    c.setFont(font, 14)
+    c.drawCentredString(width/2, height-280, t["certifies"])
+    
+    # === ИМЯ СТУДЕНТА ===
+    c.setFillColor(text_color)
+    c.setFont(font, 36)
     c.drawCentredString(width/2, height-330, student_name)
+    
+    # === "успешно завершил(а)" ===
     c.setFillColor(muted)
-    c.setFont("Helvetica", 14)
-    c.drawCentredString(width/2, height-370, "has successfully completed")
-    c.setFillColor(neon)
-    c.setFont("Helvetica-BoldOblique", 24)
+    c.setFont(font, 14)
+    c.drawCentredString(width/2, height-370, t["completed"])
+    
+    # === НАЗВАНИЕ КУРСА (адаптивный размер шрифта) ===
+    c.setFillColor(primary)
+    course_size = 24 if len(course_name) < 50 else 18 if len(course_name) < 80 else 14
+    c.setFont(font, course_size)
     c.drawCentredString(width/2, height-410, course_name)
+    
+    # === ПОДПИСЬ ===
     if signature_file:
         try:
             signature_file.seek(0)
             img = Image.open(io.BytesIO(signature_file.getvalue()))
-            img = remove_white_background(img)
+            img = process_image_for_theme(img, theme)
             r = min(150/img.width, 60/img.height)
             nw, nh = int(img.width*r), int(img.height*r)
             buf = io.BytesIO()
@@ -318,19 +592,29 @@ def create_certificate(student_name, course_name, logo_file=None, signature_file
             c.setStrokeColor(muted)
             c.line(80, 75, 250, 75)
             c.setFillColor(muted)
-            c.setFont("Helvetica", 10)
-            c.drawString(80, 60, "Authorized Signature")
+            c.setFont(font, 10)
+            c.drawString(80, 60, t["signature"])
         except: pass
+    
+    # === ДАТА ВЫДАЧИ ===
     c.setFillColor(muted)
-    c.setFont("Helvetica", 12)
-    dt = datetime.now().strftime("%B %d, %Y")
-    c.drawRightString(width-80, 80, f"Issued: {dt}")
-    c.setFont("Helvetica", 10)
+    c.setFont(font, 12)
+    now = datetime.now()
+    if lang == "ru":
+        dt = f"{now.day} {MONTHS_RU[now.month]} {now.year}"
+    else:
+        dt = now.strftime("%B %d, %Y")
+    c.drawRightString(width-80, 80, f"{t['issued']} {dt}")
+    
+    # === НОМЕР СЕРТИФИКАТА ===
+    c.setFont(font, 10)
     cid = f"VYUD-{random.randint(10000,99999)}"
-    c.drawRightString(width-80, 60, f"Certificate ID: {cid}")
+    c.drawRightString(width-80, 60, f"{t['cert_id']} {cid}")
+    
     c.save()
     buffer.seek(0)
     return buffer.getvalue()
+
 
 def transcribe_for_bot(file_path):
     """Транскрибация для Telegram бота - принимает путь к файлу"""
