@@ -1,7 +1,50 @@
+# Environment
 .env
-venv/
-.env
-venv/
-.streamlit/secrets.toml
-*.log
 .env.save
+venv/
+
+# Secrets
+.streamlit/secrets.toml
+
+# Logs
+*.log
+nohup.out
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Backup files (created by safe_deploy.sh and manual saves)
+*.backup
+*_backup*.py
+*_backup.py
+bot_backup_*.py
+bot_new*.py
+bot_old*.py
+bot_async_fixed.py
+auth_backup*.py
+auth_sqlite_backup*.py
+logic_backup*.py
+logic_cert*.py
+logic_part*.py
+app.py.backup
+
+# ReportLab font cache
+*.pkl
+
+# Database
+users.db
+
+# macOS
+.DS_Store
+
+# Archives
+*.tar.gz
+*.zip
+
+# Cookies / session files
+cookies.txt
+
+# Test cache
+.pytest_cache/

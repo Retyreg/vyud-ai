@@ -1,34 +1,34 @@
 #!/bin/bash
-# Безопасный деплой VYUD AI Bot с Git
+# Safe deployment script for VYUD AI Bot
 
 set -e
 cd /var/www/vyud_app
 
-# Получаем сообщение коммита (опционально)
+# Optional commit message
 COMMIT_MSG="${1:-auto-deploy $(date +%Y%m%d_%H%M)}"
 
-echo "📦 Создаём бэкап..."
-BACKUP_NAME="bot_backup_$(date +%Y%m%d_%H%M).py"
+echo "📦 Creating backup..."
+BACKUP_NAME="/tmp/bot_backup_$(date +%Y%m%d_%H%M).py"
 cp bot.py "$BACKUP_NAME"
-echo "✅ Бэкап: $BACKUP_NAME"
+echo "✅ Backup saved to: $BACKUP_NAME"
 
 echo ""
-echo "🧪 Запускаем тесты..."
+echo "🧪 Running tests..."
 /usr/bin/python3 -m pytest test_bot.py -v
 
 if [ $? -ne 0 ]; then
-    echo "❌ Тесты провалены! Деплой отменён."
+    echo "❌ Tests failed! Deployment cancelled."
     exit 1
 fi
 
 echo ""
-echo "📝 Коммитим в Git..."
+echo "📝 Committing to Git..."
 git add -A
-git commit -m "$COMMIT_MSG" || echo "Нет изменений для коммита"
-git push origin main 2>/dev/null || echo "⚠️ Push не удался (проверь remote)"
+git commit -m "$COMMIT_MSG" || echo "Nothing to commit"
+git push origin main 2>/dev/null || echo "⚠️ Push failed (check remote)"
 
 echo ""
-echo "🔄 Перезапускаем бота..."
+echo "🔄 Restarting bot..."
 pkill -f bot.py || true
 sleep 2
 source venv/bin/activate
@@ -36,15 +36,15 @@ nohup python3 bot.py > bot.log 2>&1 &
 sleep 3
 
 echo ""
-echo "✅ Проверяем статус..."
+echo "✅ Checking status..."
 if ps aux | grep -v grep | grep -q "bot.py"; then
-    echo "🚀 Бот запущен!"
+    echo "🚀 Bot is running!"
     tail -10 bot.log
 else
-    echo "❌ Бот не запустился! Смотри логи:"
+    echo "❌ Bot failed to start! Check logs:"
     tail -30 bot.log
     exit 1
 fi
 
 echo ""
-echo "✨ Деплой завершён!"
+echo "✨ Deployment complete!"
