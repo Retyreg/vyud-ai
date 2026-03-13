@@ -60,7 +60,10 @@ supabase = create_client(
 
 WELCOME_CREDITS = 5
 MAX_FILE_SIZE_MB = 20
-WEB_APP_URL = "https://app.vyud.online"
+WEB_APP_URL = "https://vyud-tma.vercel.app/"
+
+# Добавляем импорт WebAppInfo в начало файла, если его нет
+from aiogram.types import WebAppInfo
 
 # Настройки генерации по умолчанию
 DEFAULT_QUESTIONS = 5
@@ -422,10 +425,12 @@ async def process_successful_payment(message: Message):
             new_balance = await add_credits_to_user(telegram_id, plan["credits"])
 
             success_text = (
-                f"✅ <b>Платеж успешен!</b>\n\n"
-                f"💳 Начислено: <b>{plan['credits']} кредитов</b>\n"
-                f"💰 Новый баланс: <b>{new_balance} кредитов</b>\n\n"
-                f"Спасибо за покупку! 🎉"
+                f"🎉 <b>Ура! Платеж прошел успешно!</b>\n\n"
+                f"💳 Вам начислено: <b>{plan['credits']} кредитов</b>\n"
+                f"💰 Ваш текущий баланс: <b>{new_balance} кредитов</b>\n\n"
+                f"Теперь вы можете создавать еще больше крутых тестов! 🚀\n\n"
+                f"🎁 <b>Хотите получить еще больше кредитов бесплатно?</b>\n"
+                f"Приглашайте коллег! За каждого, кто придет по вашей ссылке, вы получите бонус."
             )
 
         else:  # subscription
@@ -434,15 +439,26 @@ async def process_successful_payment(message: Message):
             new_balance = await add_credits_to_user(telegram_id, plan["credits"])
 
             success_text = (
-                f"✅ <b>Подписка активирована!</b>\n\n"
-                f"⭐️ Тариф: <b>{plan['title']}</b>\n"
-                f"💳 Начислено: <b>{plan['credits']} кредитов</b>\n"
-                f"💰 Баланс: <b>{new_balance} кредитов</b>\n"
-                f"📅 Активна до: <b>{expires_at.strftime('%d.%m.%Y')}</b>\n\n"
-                f"Спасибо за поддержку проекта! 🎉"
+                f"🌟 <b>Подписка успешно активирована!</b>\n\n"
+                f"👑 Тариф: <b>{plan['title']}</b>\n"
+                f"💳 Начислено бонусных кредитов: <b>{plan['credits']}</b>\n"
+                f"📅 Подписка активна до: <b>{expires_at.strftime('%d.%m.%Y')}</b>\n\n"
+                f"Вы стали частью нашей VIP-команды! Спасибо за поддержку! ❤️\n\n"
+                f"📣 <b>Поделитесь радостью с друзьями!</b>\n"
+                f"Приглашайте их в VYUD AI и получайте бонусы вместе."
             )
 
-        await message.answer(success_text, parse_mode="HTML")
+        # Создаем кнопку приглашения
+        bot_info = await bot.get_me()
+        ref_link = f"https://t.me/{bot_info.username}?start=ref_{telegram_id}"
+        share_text = f"Привет! Я использую VYUD AI для создания интерактивных тестов из PDF и видео. Попробуй тоже: {ref_link}"
+        
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🎁 Пригласить друга", switch_inline_query=share_text)],
+            [InlineKeyboardButton(text="👨‍💻 В личный кабинет", callback_data="main_menu")]
+        ])
+
+        await message.answer(success_text, parse_mode="HTML", reply_markup=kb)
 
         # Обрабатываем реферальную комиссию (если есть)
         result = await process_referral_payment(telegram_id, plan["price"] * 0.02)  # Конвертируем Stars в ~USD
@@ -762,12 +778,33 @@ def extract_text_from_image(file_path: str, api_key: str) -> str:
 async def update_user_profile(user, generation_type: str = None):
     try:
         user_email = f"{user.username or f'user{user.id}'}@telegram.io"
-        existing = supabase.table("users_credits").select("total_generations, tariff").eq("telegram_id", user.id).execute()
+        existing = supabase.table("users_credits").select("total_generations, tariff, current_streak, last_activity").eq("telegram_id", user.id).execute()
+        
         total_gens = 0
         current_tariff = "free"
+        current_streak = 0
+        last_activity = None
+        
         if existing.data and len(existing.data) > 0:
-            total_gens = existing.data[0].get("total_generations", 0)
-            current_tariff = existing.data[0].get("tariff", "free")
+            user_record = existing.data[0]
+            total_gens = user_record.get("total_generations", 0)
+            current_tariff = user_record.get("tariff", "free")
+            current_streak = user_record.get("current_streak") or 0
+            
+            # Парсим last_activity
+            last_activity_str = user_record.get("last_activity")
+            if last_activity_str:
+                # Отсекаем временную зону для простоты, если есть
+                if '+' in last_activity_str:
+                    last_activity_str = last_activity_str.split('+')[0]
+                if '.' in last_activity_str:
+                    last_activity_str = last_activity_str.split('.')[0]
+                last_activity = datetime.fromisoformat(last_activity_str)
+
+        now = datetime.utcnow()
+        streak_updated = False
+        bonus_awarded = False
+
         if generation_type:
             total_gens += 1
             supabase.table("generation_logs").insert({
@@ -775,17 +812,63 @@ async def update_user_profile(user, generation_type: str = None):
                 "email": user_email,
                 "generation_type": generation_type
             }).execute()
+
+            # ЛОГИКА СТРИКОВ (только если это генерация)
+            if last_activity:
+                time_diff = now - last_activity
+                if time_diff.days == 1 or (time_diff.days == 0 and now.date() > last_activity.date()):
+                    # Следующий день - увеличиваем стрик
+                    current_streak += 1
+                    streak_updated = True
+                elif time_diff.days > 1 or (time_diff.days == 1 and now.date() > last_activity.date() + timedelta(days=1)):
+                    # Пропущено больше дня - сброс
+                    current_streak = 1
+                    streak_updated = True
+                else:
+                    # Тот же день, ничего не делаем со стриком
+                    pass
+            else:
+                # Первая активность
+                current_streak = 1
+                streak_updated = True
+            
+            # Проверка на бонус за каждые 5 дней стрика
+            if streak_updated and current_streak > 0 and current_streak % 5 == 0:
+                bonus_awarded = True
+
+            last_activity = now
+
         user_data = {
             "telegram_id": user.id,
             "email": user_email,
             "username": user.username,
             "first_name": user.first_name,
             "telegram_premium": user.is_premium or False,
-            "last_seen": datetime.utcnow().isoformat(),
+            "last_seen": now.isoformat(),
             "total_generations": total_gens,
-            "tariff": current_tariff
+            "tariff": current_tariff,
+            "current_streak": current_streak
         }
+        
+        if last_activity:
+            user_data["last_activity"] = last_activity.isoformat()
+
         supabase.table("users_credits").upsert(user_data, on_conflict="telegram_id").execute()
+        
+        # Начисляем бонус и уведомляем пользователя
+        if bonus_awarded:
+            await add_credits_to_user(user.id, 1)
+            try:
+                await bot.send_message(
+                    user.id, 
+                    f"🔥 <b>Ударный режим: {current_streak} дней!</b>\n\n"
+                    f"Вы создаете тесты {current_streak} дней подряд. За вашу целеустремленность вам начислен <b>1 бонусный кредит</b>! 🎁\n"
+                    f"Продолжайте в том же духе!",
+                    parse_mode="HTML"
+                )
+            except Exception as msg_e:
+                logging.error(f"Failed to send streak bonus msg: {msg_e}")
+
         return True
     except Exception as e:
         logging.error(f"❌ Error updating profile: {e}")
@@ -1267,7 +1350,7 @@ async def cmd_start(message: Message, command: CommandObject, state: FSMContext)
         onboarding_kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="📝 Создать курс пошагово", callback_data="onboard_create")],
             [InlineKeyboardButton(text="📎 Просто отправь файл в чат!", callback_data="onboard_file_hint")],
-            [InlineKeyboardButton(text="🌐 Открыть веб-версию", url=WEB_APP_URL)],
+            [InlineKeyboardButton(text="🚀 Открыть Mini App", web_app=WebAppInfo(url=WEB_APP_URL))],
         ])
         
         await message.answer(welcome_text, parse_mode="HTML", reply_markup=onboarding_kb)
@@ -2219,6 +2302,66 @@ async def handle_photo(message: Message):
     finally:
         if os.path.exists(file_path):
             os.remove(file_path)
+
+# ============================================
+# АДМИН-КОМАНДЫ ДЛЯ РАССЫЛКИ
+# ============================================
+
+@router.message(Command("broadcast"))
+async def cmd_broadcast(message: Message, command: CommandObject):
+    """Рассылка сообщения всем пользователям из базы (только для админа)."""
+    # Проверка на админа
+    if str(message.from_user.id) != str(ADMIN_TELEGRAM_ID):
+        return
+
+    if not command.args:
+        await message.answer("📝 Введите текст рассылки после команды. Пример:\n/broadcast Привет всем!")
+        return
+
+    # Получаем всех уникальных пользователей из таблицы users_credits
+    try:
+        response = supabase.table("users_credits").select("telegram_id").execute()
+        if not response.data:
+            await message.answer("❌ В базе нет пользователей.")
+            return
+
+        user_ids = list(set([u["telegram_id"] for u in response.data if u.get("telegram_id")]))
+        
+        count = 0
+        blocked = 0
+        
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🚀 Попробовать Mini App", web_app=WebAppInfo(url=WEB_APP_URL))]
+        ])
+
+        status_msg = await message.answer(f"📢 Начинаю рассылку на {len(user_ids)} пользователей...")
+
+        for uid in user_ids:
+            try:
+                await bot.send_message(
+                    uid, 
+                    command.args.replace("\\n", "\n"), # Поддержка переноса строк
+                    reply_markup=kb, 
+                    parse_mode="HTML"
+                )
+                count += 1
+                if count % 20 == 0:
+                    await asyncio.sleep(0.1)
+            except Exception as e:
+                logging.warning(f"Failed to send broadcast to {uid}: {e}")
+                blocked += 1
+                continue
+
+        await status_msg.edit_text(
+            f"✅ <b>Рассылка завершена!</b>\n\n"
+            f"👤 Всего пользователей: {len(user_ids)}\n"
+            f"📥 Доставлено: {count}\n"
+            f"🚫 Заблокировали бота: {blocked}",
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        await message.answer(f"❌ Ошибка при выполнении рассылки: {e}")
+
 
 async def main():
     storage = MemoryStorage()
