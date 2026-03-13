@@ -18,10 +18,14 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="VYUD AI API for Mini App")
 
-# Настройка CORS (разрешаем запросы от вашего Vercel и локального хоста)
+# Настройка CORS (разрешаем запросы от ваших доменов)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://vyud-tma.vercel.app", "http://localhost:5173"],
+    allow_origins=[
+        "https://vyud-tma.vercel.app", 
+        "https://tma.vyud.online",
+        "http://localhost:5173"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
