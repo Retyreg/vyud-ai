@@ -55,10 +55,13 @@ async def generate_test(request: GenerationRequest, x_api_key: str = Header(None
     # 2. Формируем email (как в боте)
     user_email = f"{request.username or f'user{request.telegram_id}'}@telegram.io"
 
-    # 3. Проверка баланса
-    credits = await asyncio.to_thread(get_user_credits, user_email)
-    if credits < 1:
-        raise HTTPException(status_code=402, detail="Not enough credits")
+    # 3. Проверка баланса (пропускаем для админа)
+    is_admin = (request.telegram_id == 5701645456)
+    
+    if not is_admin:
+        credits = await asyncio.to_thread(get_user_credits, user_email)
+        if credits < 1:
+            raise HTTPException(status_code=402, detail="Not enough credits")
 
     try:
         # 4. Запускаем генерацию
@@ -93,8 +96,9 @@ async def generate_test(request: GenerationRequest, x_api_key: str = Header(None
             save_quiz, user_email, title, questions_json, getattr(quiz_data, "hints", [])
         )
 
-        # 7. Списываем кредит
-        await asyncio.to_thread(deduct_credit, user_email, 1)
+        # 7. Списываем кредит (только если не админ)
+        if not is_admin:
+            await asyncio.to_thread(deduct_credit, user_email, 1)
         
         # 8. Логируем генерацию в Supabase (опционально)
         supabase = get_supabase()
