@@ -1084,7 +1084,7 @@ async def send_quiz_to_chat(chat_id: int, questions: list):
         try:
             if q_type in ('single_choice', 'true_false'):
                 # Обычный quiz poll
-                await bot.send_poll(
+                await bot.send_poll( # scenario
                     chat_id=chat_id,
                     question=f"{i}. {q_dict['question'][:250]}",
                     options=[opt[:95] for opt in q_dict['options']],
@@ -1100,7 +1100,7 @@ async def send_quiz_to_chat(chat_id: int, questions: list):
                 correct_options = [q_dict['options'][idx] for idx in correct_ids if idx < len(q_dict['options'])]
                 
                 # Отправляем обычный poll с allows_multiple_answers
-                poll_msg = await bot.send_poll(
+                poll_msg = await bot.send_poll( # scenario
                     chat_id=chat_id,
                     question=f"{i}. {q_dict['question'][:250]}",
                     options=[opt[:95] for opt in q_dict['options']],
