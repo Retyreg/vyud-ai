@@ -1,4 +1,3 @@
-streamlit
 openai
 supabase
 moviepy
@@ -8,8 +7,9 @@ llama-index
 llama-parse
 llama-index-llms-openai
 python-dotenv
-pyTelegramBotAPI
-aiogram
+aiogram>=3.0
 fastapi
 uvicorn[standard]
 python-multipart
+aiohttp
+toml
