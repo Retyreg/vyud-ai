@@ -9,9 +9,8 @@ services:
   # ─────────────────────────────────────────────
   - type: web
     name: vyud-api
-    runtime: docker
-    dockerfilePath: ./Dockerfile
-    # Render подставит PORT автоматически
+    runtime: python
+    buildCommand: pip install -r requirements.txt
     startCommand: uvicorn api.main:app --host 0.0.0.0 --port $PORT
     plan: free
     healthCheckPath: /api/health
@@ -19,7 +18,7 @@ services:
 
     envVars:
       - key: PYTHON_VERSION
-        value: "3.11"
+        value: "3.11.0"
 
       # ── Telegram ──────────────────────────────
       - key: TELEGRAM_BOT_TOKEN
@@ -47,15 +46,15 @@ services:
   # ─────────────────────────────────────────────
   - type: worker
     name: vyud-bot
-    runtime: docker
-    dockerfilePath: ./Dockerfile
+    runtime: python
+    buildCommand: pip install -r requirements.txt
     startCommand: python -m bot.main
     plan: free
     autoDeploy: true
 
     envVars:
       - key: PYTHON_VERSION
-        value: "3.11"
+        value: "3.11.0"
 
       # ── Telegram ──────────────────────────────
       - key: TELEGRAM_BOT_TOKEN
