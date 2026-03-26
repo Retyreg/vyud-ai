@@ -20,8 +20,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Копируем весь проект
 COPY . .
 
-# Открываем порт
+# Открываем порт (Render динамически назначает PORT)
 EXPOSE 8000
 
-# Команда запуска API сервера
-CMD ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8000"]
+# Render переопределяет CMD через startCommand в render.yaml
+CMD ["sh", "-c", "uvicorn api.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

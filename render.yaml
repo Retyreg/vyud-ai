@@ -1,0 +1,74 @@
+# render.yaml — инфраструктура как код для Render
+# Один репо, два сервиса: API (web) + Bot (worker)
+# Документация: https://render.com/docs/blueprint-spec
+
+services:
+
+  # ─────────────────────────────────────────────
+  # 1. REST API для Mini App (FastAPI)
+  # ─────────────────────────────────────────────
+  - type: web
+    name: vyud-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    # Render подставит PORT автоматически
+    startCommand: uvicorn api.main:app --host 0.0.0.0 --port $PORT
+    plan: free
+    healthCheckPath: /api/health
+    autoDeploy: true
+
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11"
+
+      # ── Telegram ──────────────────────────────
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+
+      # ── OpenAI / LlamaCloud ───────────────────
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: LLAMA_CLOUD_API_KEY
+        sync: false
+
+      # ── Supabase (service_role key!) ──────────
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+
+      # ── API security ──────────────────────────
+      # Список ключей через запятую, например: key1,key2
+      - key: API_KEYS
+        sync: false
+
+  # ─────────────────────────────────────────────
+  # 2. Telegram-бот (background worker)
+  # ─────────────────────────────────────────────
+  - type: worker
+    name: vyud-bot
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    startCommand: python -m bot.main
+    plan: free
+    autoDeploy: true
+
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11"
+
+      # ── Telegram ──────────────────────────────
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+
+      # ── OpenAI / LlamaCloud ───────────────────
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: LLAMA_CLOUD_API_KEY
+        sync: false
+
+      # ── Supabase ──────────────────────────────
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
