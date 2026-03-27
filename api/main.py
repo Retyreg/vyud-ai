@@ -27,13 +27,19 @@ import logic
 log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Bot setup (импортируем router из bot/main.py)
+# Bot setup — защищённый импорт: API стартует даже если bot упал
 # ---------------------------------------------------------------------------
-from bot.main import router as bot_router
+_bot: Bot | None = None
+_dp: Dispatcher | None = None
 
-_bot = Bot(token=TELEGRAM_BOT_TOKEN, default=DefaultBotProperties(parse_mode="Markdown"))
-_dp = Dispatcher()
-_dp.include_router(bot_router)
+try:
+    from bot.main import router as bot_router
+    _bot = Bot(token=TELEGRAM_BOT_TOKEN, default=DefaultBotProperties(parse_mode="Markdown"))
+    _dp = Dispatcher()
+    _dp.include_router(bot_router)
+    log.info("Bot router loaded successfully")
+except Exception as _bot_err:
+    log.error("Bot failed to load (webhook will return 503): %s", _bot_err)
 
 # Render автоматически задаёт RENDER_EXTERNAL_URL = https://vyud-api.onrender.com
 WEBHOOK_BASE = os.getenv("RENDER_EXTERNAL_URL", "").rstrip("/")
