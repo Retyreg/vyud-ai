@@ -50,16 +50,19 @@ WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "vyud-webhook-secret")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: регистрируем webhook
-    if WEBHOOK_BASE:
+    if _bot and WEBHOOK_BASE:
         webhook_url = f"{WEBHOOK_BASE}{WEBHOOK_PATH}"
         await _bot.set_webhook(webhook_url, secret_token=WEBHOOK_SECRET, drop_pending_updates=True)
         log.info("Webhook set: %s", webhook_url)
+    elif not _bot:
+        log.error("Bot not loaded — webhook not registered")
     else:
         log.warning("RENDER_EXTERNAL_URL не задан — webhook не зарегистрирован (локальная разработка?)")
     yield
     # Shutdown: удаляем webhook
-    await _bot.delete_webhook()
-    await _bot.session.close()
+    if _bot:
+        await _bot.delete_webhook()
+        await _bot.session.close()
 
 
 app = FastAPI(title="VYUD API", version="2.0.0", lifespan=lifespan)
@@ -156,6 +159,9 @@ async def telegram_webhook(request: Request):
     secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
     if secret != WEBHOOK_SECRET:
         raise HTTPException(status_code=403, detail="Invalid webhook secret")
+
+    if not _bot or not _dp:
+        raise HTTPException(status_code=503, detail="Bot not available")
 
     from aiogram.types import Update
     data = await request.json()
