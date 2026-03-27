@@ -21,7 +21,7 @@ from shared.config import API_KEYS, TELEGRAM_BOT_TOKEN, OPENAI_API_KEY, LLAMA_CL
 from shared import supabase_client as db
 import logic
 
-app = FastAPI(title="VYUD API", version="2.0.0", docs_url="/api/docs")
+app = FastAPI(title="VYUD API", version="2.0.0")
 
 app.add_middleware(
     CORSMiddleware,
