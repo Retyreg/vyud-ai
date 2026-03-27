@@ -1,27 +1,62 @@
 """
-REST API для Mini App VYUD.
-Все endpoints требуют заголовок x-api-key.
-initData Telegram валидируется на каждом запросе с telegram_id.
+REST API для Mini App VYUD + Telegram Bot webhook.
+Все API endpoints требуют заголовок x-api-key.
+Бот работает через webhook — не нужен отдельный worker-процесс.
 """
 import hashlib
 import hmac
+import logging
 import os
 import sys
+from contextlib import asynccontextmanager
 from typing import Optional
 from urllib.parse import unquote, parse_qsl
 
-from fastapi import FastAPI, HTTPException, Header, Depends
+from aiogram import Bot, Dispatcher
+from aiogram.client.default import DefaultBotProperties
+from fastapi import FastAPI, HTTPException, Header, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-# Путь к корню репо чтобы импортировать shared и logic
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from shared.config import API_KEYS, TELEGRAM_BOT_TOKEN, OPENAI_API_KEY, LLAMA_CLOUD_API_KEY
+from shared.config import API_KEYS, TELEGRAM_BOT_TOKEN
 from shared import supabase_client as db
 import logic
 
-app = FastAPI(title="VYUD API", version="2.0.0")
+log = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Bot setup (импортируем router из bot/main.py)
+# ---------------------------------------------------------------------------
+from bot.main import router as bot_router
+
+_bot = Bot(token=TELEGRAM_BOT_TOKEN, default=DefaultBotProperties(parse_mode="Markdown"))
+_dp = Dispatcher()
+_dp.include_router(bot_router)
+
+# Render автоматически задаёт RENDER_EXTERNAL_URL = https://vyud-api.onrender.com
+WEBHOOK_BASE = os.getenv("RENDER_EXTERNAL_URL", "").rstrip("/")
+WEBHOOK_PATH = "/bot/webhook"
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "vyud-webhook-secret")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup: регистрируем webhook
+    if WEBHOOK_BASE:
+        webhook_url = f"{WEBHOOK_BASE}{WEBHOOK_PATH}"
+        await _bot.set_webhook(webhook_url, secret_token=WEBHOOK_SECRET, drop_pending_updates=True)
+        log.info("Webhook set: %s", webhook_url)
+    else:
+        log.warning("RENDER_EXTERNAL_URL не задан — webhook не зарегистрирован (локальная разработка?)")
+    yield
+    # Shutdown: удаляем webhook
+    await _bot.delete_webhook()
+    await _bot.session.close()
+
+
+app = FastAPI(title="VYUD API", version="2.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -108,6 +143,20 @@ PLANS = {
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
+
+@app.post(WEBHOOK_PATH)
+async def telegram_webhook(request: Request):
+    """Принимает обновления от Telegram и передаёт aiogram."""
+    secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+    if secret != WEBHOOK_SECRET:
+        raise HTTPException(status_code=403, detail="Invalid webhook secret")
+
+    from aiogram.types import Update
+    data = await request.json()
+    update = Update.model_validate(data)
+    await _dp.feed_update(bot=_bot, update=update)
+    return {"ok": True}
+
 
 @app.get("/api/health")
 async def health():

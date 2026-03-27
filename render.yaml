@@ -41,33 +41,6 @@ services:
       - key: API_KEYS
         sync: false
 
-  # ─────────────────────────────────────────────
-  # 2. Telegram-бот (background worker)
-  # ─────────────────────────────────────────────
-  - type: worker
-    name: vyud-bot
-    runtime: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: python -m bot.main
-    plan: free
-    autoDeploy: true
-
-    envVars:
-      - key: PYTHON_VERSION
-        value: "3.11.0"
-
-      # ── Telegram ──────────────────────────────
-      - key: TELEGRAM_BOT_TOKEN
-        sync: false
-
-      # ── OpenAI / LlamaCloud ───────────────────
-      - key: OPENAI_API_KEY
-        sync: false
-      - key: LLAMA_CLOUD_API_KEY
-        sync: false
-
-      # ── Supabase ──────────────────────────────
-      - key: SUPABASE_URL
-        sync: false
-      - key: SUPABASE_KEY
+      # ── Webhook secret (придумай любую строку) ──
+      - key: WEBHOOK_SECRET
         sync: false

@@ -24,8 +24,10 @@ import logic
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
 
+# router — единственный публичный объект этого модуля.
+# Экземпляр Bot НЕ создаётся здесь: при webhook-режиме его создаёт api/main.py
+# и передаёт в хендлеры через m.bot. При polling-режиме (if __name__) — создаётся ниже.
 router = Router()
-bot = Bot(token=TELEGRAM_BOT_TOKEN)
 
 # ---------------------------------------------------------------------------
 # Credit plans (зеркало Dashboard.tsx PLANS и api/main.py PLANS)
@@ -123,32 +125,32 @@ async def handle_files(m: Message):
     path = f"/tmp/vyud_{telegram_id}_{fid}"
 
     try:
-        f_info = await bot.get_file(fid)
+        f_info = await m.bot.get_file(fid)
         ext = f_info.file_path.rsplit(".", 1)[-1]
         path = f"{path}.{ext}"
-        await bot.download_file(f_info.file_path, path)
+        await m.bot.download_file(f_info.file_path, path)
 
-        await bot.edit_message_text("👂 Изучаю содержимое...", m.chat.id, msg.message_id)
+        await m.bot.edit_message_text("👂 Изучаю содержимое...", m.chat.id, msg.message_id)
         text = await asyncio.to_thread(
             logic.process_file_to_text, LocalFileWrapper(path), OPENAI_API_KEY, LLAMA_CLOUD_API_KEY
         )
 
         if not text:
-            await bot.edit_message_text("❌ Не удалось извлечь текст из файла.", m.chat.id, msg.message_id)
+            await m.bot.edit_message_text("❌ Не удалось извлечь текст из файла.", m.chat.id, msg.message_id)
             return
 
-        await bot.edit_message_text("🧠 Генерирую вопросы...", m.chat.id, msg.message_id)
+        await m.bot.edit_message_text("🧠 Генерирую вопросы...", m.chat.id, msg.message_id)
         quiz = await asyncio.to_thread(logic.generate_quiz_ai, text=text, count=5, difficulty="Medium", lang="Russian")
 
         db.deduct_credit(telegram_id, 1)
-        db.increment_generations(telegram_id)  # стрик + счётчик + бонус каждые 5 дней
+        db.increment_generations(telegram_id)
 
-        await bot.delete_message(m.chat.id, msg.message_id)
+        await m.bot.delete_message(m.chat.id, msg.message_id)
         await m.answer("✅ Готово! Вот ваш тест:")
 
         for q in quiz.questions:
             try:
-                await bot.send_poll(
+                await m.bot.send_poll(
                     chat_id=m.chat.id,
                     question=q.scenario[:299],
                     options=[o[:99] for o in q.options],
@@ -216,11 +218,14 @@ async def successful_payment(m: Message):
 # ---------------------------------------------------------------------------
 
 async def main():
+    """Polling-режим для локальной разработки (python -m bot.main)."""
+    from aiogram.client.default import DefaultBotProperties
+    _bot = Bot(token=TELEGRAM_BOT_TOKEN, default=DefaultBotProperties(parse_mode="Markdown"))
     dp = Dispatcher()
     dp.include_router(router)
-    await bot.delete_webhook(drop_pending_updates=True)
-    log.info("🤖 VYUD Bot started")
-    await dp.start_polling(bot)
+    await _bot.delete_webhook(drop_pending_updates=True)
+    log.info("🤖 VYUD Bot started (polling)")
+    await dp.start_polling(_bot)
 
 
 if __name__ == "__main__":
