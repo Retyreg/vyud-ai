@@ -5,7 +5,7 @@ import toml
 from pathlib import Path
 from aiogram import Bot, Dispatcher, Router, F
 from aiogram.filters import Command
-from aiogram.types import Message
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 
 # Импортируем нашу логику
 import logic 
@@ -40,7 +40,15 @@ class LocalFileWrapper:
 
 @router.message(Command("start"))
 async def start(m: Message): 
-    await m.answer("👋 Привет! Я VYUD AI. Пришли мне файл (PDF/DOCX), голосовое, видео-кружочек или аудио.")
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🌐 Канал экосистемы VYUD AI", url="https://t.me/vyud_ai")]
+    ])
+    await m.answer(
+        "👋 Привет! Я VYUD AI. \n\n"
+        "Пришли мне файл (PDF/DOCX), голосовое, видео-кружочек или аудио, и я превращу его в интерактивный тест!\n\n"
+        "Следите за всеми нашими проектами в официальном канале:",
+        reply_markup=keyboard
+    )
 
 @router.message(F.video_note | F.voice | F.audio | F.video | F.document)
 async def handle_files(m: Message):
