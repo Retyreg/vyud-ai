@@ -1,8 +1,8 @@
 import asyncio
 import logging
 import os
-import toml
 from pathlib import Path
+from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, Router, F
 from aiogram.filters import Command
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
@@ -12,16 +12,10 @@ import logic
 import auth
 
 # --- НАСТРОЙКИ ---
-secrets_path = Path(__file__).parent / ".streamlit" / "secrets.toml"
-if secrets_path.exists():
-    secrets = toml.load(secrets_path)
-    TOKEN = secrets.get("TELEGRAM_BOT_TOKEN")
-    OPENAI_KEY = secrets.get("OPENAI_API_KEY", "")
-    LLAMA_KEY = secrets.get("LLAMA_CLOUD_API_KEY", "")
-else: 
-    TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-    OPENAI_KEY = os.getenv("OPENAI_API_KEY")
-    LLAMA_KEY = os.getenv("LLAMA_CLOUD_API_KEY")
+load_dotenv()
+TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+OPENAI_KEY = os.getenv("OPENAI_API_KEY")
+LLAMA_KEY = os.getenv("LLAMA_CLOUD_API_KEY")
 
 router = Router()
 bot = Bot(token=TOKEN)

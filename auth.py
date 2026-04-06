@@ -1,11 +1,17 @@
-import streamlit as st
+import os
 from supabase import create_client
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # --- 1. ПОДКЛЮЧЕНИЕ К SUPABASE ---
 try:
-    SUPABASE_URL = st.secrets["SUPABASE_URL"]
-    SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
-    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+    SUPABASE_URL = os.getenv("SUPABASE_URL")
+    SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+    if SUPABASE_URL and SUPABASE_KEY:
+        supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+    else:
+        supabase = None
 except Exception as e:
     # Если ключей нет, работаем в демо-режиме (без базы)
     print(f"⚠️ Supabase error: {e}")
@@ -17,9 +23,9 @@ def check_password(email, password):
     Простая проверка. Админа пускаем по паролю,
     обычных пользователей — просто по email (для MVP).
     """
-    # Админ (данные в secrets)
-    admin_email = st.secrets.get("ADMIN_EMAIL")
-    admin_pass = st.secrets.get("ADMIN_PASSWORD")
+    # Админ (данные в env)
+    admin_email = os.getenv("ADMIN_EMAIL")
+    admin_pass = os.getenv("ADMIN_PASSWORD")
 
     if admin_email and admin_pass and email == admin_email and password == admin_pass:
         return True
@@ -69,5 +75,5 @@ def deduct_credit(email, amount=1):
         supabase.table("users_credits").update({"credits": new_balance}).eq("email", email).execute()
         return True
     except Exception as e:
-        st.error(f"Ошибка списания: {e}")
+        print(f"Ошибка списания: {e}")
         return False

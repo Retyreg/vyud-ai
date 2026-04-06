@@ -5,15 +5,13 @@
 CourseFlow is an AI-powered engine designed to automate the work of Instructional Designers. It uses advanced RAG (Retrieval-Augmented Generation) to understand complex technical documentation and generate scenario-based assessments.
 
 ## 🚀 Live Demo
-Try it here: [https://retyreg.streamlit.app/](https://retyreg.streamlit.app/)
+Try it here: [https://lms.vyud.online/](https://lms.vyud.online/)
 
 ## 🛠 Tech Stack
 - **Core:** Python 3.11
 - **Orchestration:** LlamaIndex
 - **Parsing:** LlamaParse (SOTA PDF parsing)
 - **LLM:** OpenAI GPT-4o
-- **UI:** Streamlit
-- **Deployment:** Streamlit Community Cloud
 
 ## ✨ Key Features
 - **Smart Parsing:** Handles tables, charts, and complex layouts via LlamaParse.
@@ -38,10 +36,10 @@ pip install -r requirements.txt
 ### 3. Configure secrets
 Copy the example file and add your API keys:
 ```bash
-cp .streamlit/secrets.toml.example .streamlit/secrets.toml
+cp .env.example .env
 ```
 
-Edit `.streamlit/secrets.toml` and add your keys:
+Edit `.env` and add your keys:
 - **OPENAI_API_KEY** - Get from [OpenAI Platform](https://platform.openai.com/api-keys)
 - **LLAMA_CLOUD_API_KEY** - Get from [Llama Cloud](https://cloud.llamaindex.ai/api-key)
 - **SUPABASE_URL & SUPABASE_KEY** - Get from [Supabase Dashboard](https://supabase.com/dashboard)
@@ -49,9 +47,8 @@ Edit `.streamlit/secrets.toml` and add your keys:
 
 ### 4. Run the application
 
-**Streamlit Web App:**
+****
 ```bash
-streamlit run app.py
 ```
 
 **REST API Server:**

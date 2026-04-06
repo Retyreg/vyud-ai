@@ -33,15 +33,12 @@ app.add_middleware(
 )
 
 # Загружаем API ключи
-try:
-    import streamlit as st
-    OPENAI_KEY = st.secrets.get("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY"))
-    LLAMA_KEY = st.secrets.get("LLAMA_CLOUD_API_KEY", os.getenv("LLAMA_CLOUD_API_KEY"))
-    VALID_API_KEYS = st.secrets.get("API_KEYS", os.getenv("API_KEYS", "")).split(",")
-except:
-    OPENAI_KEY = os.getenv("OPENAI_API_KEY")
-    LLAMA_KEY = os.getenv("LLAMA_CLOUD_API_KEY")
-    VALID_API_KEYS = os.getenv("API_KEYS", "").split(",")
+from dotenv import load_dotenv
+load_dotenv()
+
+OPENAI_KEY = os.getenv("OPENAI_API_KEY")
+LLAMA_KEY = os.getenv("LLAMA_CLOUD_API_KEY")
+VALID_API_KEYS = os.getenv("API_KEYS", "").split(",")
 
 # Очищаем пустые ключи
 VALID_API_KEYS = [k.strip() for k in VALID_API_KEYS if k.strip()]
