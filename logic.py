@@ -82,8 +82,19 @@ def compress_audio(input_path):
         print(f"Warning: Audio compression failed: {e}")
         return input_path
 
-def process_file_to_text(uploaded_file, openai_key, llama_key):
-    """Определяет тип файла и извлекает текст"""
+def process_file_to_text(uploaded_file, openai_key: str, llama_key: str) -> str:
+    """
+    Принимает объект файла, определяет его тип и извлекает текст.
+    Для видео/аудио использует Whisper, для документов - LlamaParse.
+    
+    Args:
+        uploaded_file: Объект, поддерживающий .name и .getvalue()
+        openai_key: API ключ OpenAI
+        llama_key: API ключ LlamaCloud
+        
+    Returns:
+        Извлеченный текст в формате строки.
+    """
     
     text = ""
     file_ext = os.path.splitext(uploaded_file.name)[1].lower()
@@ -141,8 +152,19 @@ def process_file_to_text(uploaded_file, openai_key, llama_key):
             
     return text
 
-def generate_quiz_ai(text, count, difficulty, lang):
-    """Генерирует JSON с тестом через GPT-4o"""
+def generate_quiz_ai(text: str, count: int, difficulty: str, lang: str) -> Quiz:
+    """
+    Генерирует JSON с квизом на основе текста с использованием GPT-4o.
+    
+    Args:
+        text: Входящий текст для анализа.
+        count: Количество вопросов.
+        difficulty: Уровень сложности (Easy, Medium, Hard).
+        lang: Язык (Russian, English, Kazakh).
+        
+    Returns:
+        Объект Quiz, содержащий список вопросов.
+    """
     
     # Настраиваем LLM глобально для LlamaIndex
     Settings.llm = OpenAI(model="gpt-4o", temperature=0.2)

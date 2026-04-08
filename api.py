@@ -158,19 +158,23 @@ async def generate_quiz_from_file(
 
     try:
         # Оборачиваем UploadFile в объект с методом getvalue()
-        class FileWrapper:
-            def __init__(self, upload_file):
-                self.name = upload_file.filename
-                self._file = upload_file.file
+    class FileWrapper:
+        def __init__(self, upload_file):
+            """
+            Оборачивает UploadFile для совместимости с SimpleDirectoryReader.
+            """
+            self.name = upload_file.filename
+            self._file = upload_file.file
 
-            def getvalue(self):
-                self._file.seek(0)
-                return self._file.read()
+        def getvalue(self):
+            """Возвращает содержимое файла."""
+            self._file.seek(0)
+            return self._file.read()
 
-        wrapped_file = FileWrapper(file)
+    wrapped_file = FileWrapper(file)
 
-        # 1. Извлекаем текст из файла
-        text_content = logic.process_file_to_text(wrapped_file, OPENAI_KEY, LLAMA_KEY)
+    # 1. Извлекаем текст из файла
+    text_content = logic.process_file_to_text(wrapped_file, OPENAI_KEY, LLAMA_KEY)
 
         if not text_content or len(text_content.strip()) < 50:
             raise HTTPException(
