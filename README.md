@@ -1,66 +1,56 @@
-# 🎓 CourseFlow AI
+# VYUD AI Platform (CourseFlow)
 
-**Turn boring PDFs into interactive quizzes in seconds.**
+**Turn any document or video into an interactive, scenario-based learning experience in seconds.**
 
-CourseFlow is an AI-powered engine designed to automate the work of Instructional Designers. It uses advanced RAG (Retrieval-Augmented Generation) to understand complex technical documentation and generate scenario-based assessments.
+VYUD AI is an AI-powered engine designed to automate the work of Instructional Designers and HR teams. It uses advanced RAG (Retrieval-Augmented Generation) to understand complex technical documentation and generate high-quality assessments, bridging the gap between passive reading and active comprehension.
 
-## 🚀 Live Demo
-Try it here: [https://lms.vyud.online/](https://lms.vyud.online/)
+## 🚀 Key Features
+
+*   **Smart Multi-format Parsing:** Supports PDF, DOCX, TXT, MP4, MP3, and M4A. Handles tables, charts, and complex layouts effortlessly.
+*   **Scenario-Based Assessment:** Generates application-level questions (Bloom's Taxonomy Level 3+), not just simple recall.
+*   **Enterprise Security:** Built with strict data isolation for corporate knowledge.
+*   **Ready-to-use API:** FastAPI-based backend for easy integration into existing LMS or custom workflows.
+*   **Telegram Integration:** AI-assistant bot for on-the-go quiz generation from voice notes or documents.
 
 ## 🛠 Tech Stack
-- **Core:** Python 3.11
-- **Orchestration:** LlamaIndex
-- **Parsing:** LlamaParse (SOTA PDF parsing)
-- **LLM:** OpenAI GPT-4o
 
-## ✨ Key Features
-- **Smart Parsing:** Handles tables, charts, and complex layouts via LlamaParse.
-- **Scenario Generation:** Creates "Bloom's Taxonomy Level 3" questions (application), not just memorization.
-- **Export Ready:** Generates a standalone `.html` file that works offline or can be uploaded to any LMS.
-- **REST API:** FastAPI endpoints for external integrations.
-- **Multi-format Support:** PDF, DOCX, MP4, MP3, M4A files.
+| Layer | Technology |
+|-------|------------|
+| **Core** | Python 3.11 |
+| **AI Orchestration** | LlamaIndex, LiteLLM |
+| **LLM Engine** | OpenAI GPT-4o, Anthropic, Google Gemini |
+| **Backend API** | FastAPI |
+| **Parsing** | LlamaParse |
+| **Database/Auth** | Supabase (PostgreSQL) |
 
-## 🔧 Setup & Installation
+## 🏗️ Quick Start
 
-### 1. Clone the repository
+### 1. Setup Environment
 ```bash
+# Clone the repository
 git clone https://github.com/Retyreg/vyud-ai.git
 cd vyud-ai
-```
 
-### 2. Install dependencies
-```bash
-pip install -r requirements.txt
-```
-
-### 3. Configure secrets
-Copy the example file and add your API keys:
-```bash
+# Create .env from example and add your keys
 cp .env.example .env
+# Set: OPENAI_API_KEY, LLAMA_CLOUD_API_KEY, SUPABASE_URL, SUPABASE_KEY
 ```
 
-Edit `.env` and add your keys:
-- **OPENAI_API_KEY** - Get from [OpenAI Platform](https://platform.openai.com/api-keys)
-- **LLAMA_CLOUD_API_KEY** - Get from [Llama Cloud](https://cloud.llamaindex.ai/api-key)
-- **SUPABASE_URL & SUPABASE_KEY** - Get from [Supabase Dashboard](https://supabase.com/dashboard)
-- **API_KEYS** - Generate with: `python -c "import secrets; print('vyud_' + secrets.token_urlsafe(32))"`
-
-### 4. Run the application
-
-****
-```bash
-```
+### 2. Run Locally
 
 **REST API Server:**
 ```bash
 python api.py
-# API docs: http://localhost:8000/api/docs
+# API docs available at: http://localhost:8000/api/docs
 ```
 
-**Telegram Bot:**
+**Telegram AI Bot:**
 ```bash
 python bot.py
 ```
 
-## 📚 API Documentation
-See [API_EXAMPLES.md](API_EXAMPLES.md) for detailed API usage examples.
+## 📚 API Integration
+VYUD AI provides a clean REST API for external integrations. See `API_EXAMPLES.md` for details on how to generate quizzes programmatically for your users.
+
+---
+Built with ❤️ by [VYUD AI](https://vyud.tech)
