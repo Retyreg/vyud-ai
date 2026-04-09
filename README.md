@@ -1,4 +1,4 @@
-# VYUD AI Platform (CourseFlow)
+# VYUD AI Platform (VYUD LMS)
 
 **Turn any document or video into an interactive, scenario-based learning experience in seconds.**
 
